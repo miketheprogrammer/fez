@@ -12,9 +12,10 @@ function generateBuildGraph(inputs, rules) {
 
       var matches = [];
       outputs.forEach(function(out) {
-        if(minimatch(out, pattern))
+        if(minimatch(out, pattern) && !minimatch(out, "node_modules/**"))
           matches.push(out);
       });
+
       return matches;
     }
 

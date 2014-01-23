@@ -45,7 +45,7 @@ fez.mapFile = function(pattern) {
       }
     })();
 
-    return pattern.replace("%f", f).replace("%F", path.basename(input));
+    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
   };
 };
 
@@ -84,7 +84,7 @@ fez.glob = function(pattern) {
   return PatternMatch(function(files) {
     //(ibw) We can do better than this. Fork isaacs' glob and make it work with a virtual file system
     return files.filter(function(f) {
-      return minimatch(f, pattern);
+      return minimatch(f, pattern) && !minimatch(f, "node_modules/**");
     });
   });
 };
@@ -93,7 +93,7 @@ function PatternMatch(fn) {
   fn.filterOut = function(pattern) {
     var fn = this;
     return PatternMatch(function(files) {
-      fn(files).filter(function(f) {
+      return fn(files).filter(function(f) {
         return !minimatch(f, pattern);
       });
     });
