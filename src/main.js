@@ -267,7 +267,7 @@ function digest(nodes, working, changelist, options) {
     results.forEach(function(i) {
       if(i.isRejected()) {
         anyRejected = anyWorkDone = true;
-        if(options.verbose) console.log("Rejected:", i.error());
+        if(options.verbose) console.log("Rejected:", i.error().stack);
       } else {
         anyWorkDone = anyWorkDone || i.value();
       }
