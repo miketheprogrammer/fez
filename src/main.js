@@ -14,9 +14,10 @@ var nopt = require("nopt"),
     Writable = require("stream").Writable,
     exec = require("child_process").exec,
     Input = require("./input"),
-    generateBuildGraph = require("./graph"),
+    generateBuildGraph = require("./graph2"),
     fezUtil = require("./util"),
     xtend = require("xtend"),
+    util = require("util"),
     mxtend = require("xtend/mutable");
 
 function fez(module) {
@@ -75,38 +76,101 @@ function createRuleFns(rules) {
     rules.push({ inputs: [input], output: output, op: operation, each: true, always: options.always });
   };
 
+
   return defineRule;
 }
 
-function processTarget(target, isChild, options) {
-  var requires = [],
-      stages = [];
-
-  var stage = function(description, cb) {
-    if(arguments.length === 1) {
-      cb = description;
-      description = undefined;
-    }
-
-    cb.description = description;
-    stages.push(cb);
-  };
-
-  stage.use = function(target) {
-    toArray(target).forEach(function(r) {
-      requires.push(r);
-    });
-  };
-
-  target(stage);
-
-  return resolveRequires(stages, requires, isChild, options);
+function createStage() {
+  return { rules: [], stages: [], edges: [] };
 }
 
-function resolveRequires(stages, requires, isChild, options) {
-  if(options.dot)
-    return work(stages, options, isChild, anyWorkDone);
+function processTarget(target, isChild, options) {
+  var currentStage = new Stage(),
+      each = false,
+      spec = {},
+      requires = [];
 
+  spec.rule = function(input, output, operation, options) {
+    if(arguments.length === 2) {
+      operation = output;
+      output = undefined;
+    } else if(arguments.length === 3 && typeof operation === "object") {
+      operation = output;
+      options = operation;
+      output = undefined;
+    }
+
+    currentStage.nodes.push(new Rule(input, output, operation));
+  };
+
+  spec.stage = function(fn) {
+    runStage(fn);
+  };
+
+  spec.withEach = function(glob, fn) {
+    each = new MagicFile(glob);
+
+    var stage = runStage(fn.bind(null, each));
+
+    //Flag the stage as a withEach so that we can handle it properly down the line
+    stage.withEach = true;
+
+    //Make sure the stage is marked as depending on everything with this glob
+    stage.inputs.push(glob);
+
+    each = false;
+  };
+
+  spec.with = function(file, fn) {
+    var magic = new MagicFile(file);
+    var stage = runStage(fn.bind(null, magic));
+  };
+
+  function runStage(stageFunction) {
+    var stage = new Stage(),
+        prevStage = currentStage;
+
+    currentStage.nodes.push(stage);
+    currentStage = stage;
+    stageFunction();
+    currentStage = prevStage;
+
+    return stage;
+  };
+
+  target(spec);
+
+  resolveRequires(currentStage, requires, isChild, options);
+}
+
+function Rule(inputs, outputs, operation) {
+  this.inputs = toArray(inputs);
+  this.outputs = toArray(outputs);
+  this.operation = operation;
+}
+
+function Stage() {
+  this.inputs = [];
+  this.outputs = [];
+  this.nodes = [];
+}
+
+//A time-traveling file container
+function MagicFile() {
+
+}
+
+MagicFile.prototype.getFilename = function() {
+  return function() {
+    return this._file.getFilename();
+  }.bind(this);
+};
+
+MagicFile.prototype._setFile = function(file) {
+  this._file = file;
+};
+
+function resolveRequires(stage, requires, isChild, options) {
   var anyWorkDone = false;
   return (function nextRequire() {
     if(requires.length > 0) {
@@ -115,46 +179,14 @@ function resolveRequires(stages, requires, isChild, options) {
         return nextRequire();
       });
     } else {
-      return work(stages, options, isChild, anyWorkDone).then(function(workDone) {
-        return work(stages, options, isChild, workDone, options);
-      });
+      return work(stage, options, isChild, anyWorkDone);
     }
   })();
 }
 
-function work(stages, options, isChild, prevWorkDone) {
-  if(stages.length === 0) return false;
-
-  var rules = [], 
-      defineRule = createRuleFns(rules),
-      done = null;
-
-  defineRule.script = function() {
-    if(rules.length > 0) throw new Error("Cannot define rules in imperative mode");
-    var resolver = Promise.defer();
-    done = resolver.promise;
-    return resolver.callback;
-  };
-
-  var stage = stages.shift(),
-      lastStage = (stages.length === 0);
-
-  /*
-  cursor.green();
-  if(stage.description)
-    console.log("Mounting stage: \"" + stage.description + "\"...");
-  else
-    console.log("Mounting next stage...");
-  cursor.reset();
-   */
-   
-  var result = stage(defineRule);
-
-  if(done && isPromise(result)) 
-    done = result;
-
-  //return Promise.all(rules.map(resolveRuleInputs)).then(function(rules) {
-  var nodes = generateBuildGraph(getAllMatchingInputs(rules), rules);
+function work(stage, options, isChild, prevWorkDone) {
+  var nodes = generateBuildGraph(glob.sync("**"), stage);
+  return;
 
   if(options.verbose)
     console.log(nodes);
