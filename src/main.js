@@ -93,10 +93,10 @@ function processTarget(target) {
                 newWorklist.unshift(node);
               });
             });
-            newWorklist.push(node);
 
+            newWorklist.push(node);
           } else {
-            if(!node.multi) {
+            if(!node.stage.multi) {
               if(!node.unresolvedInputs) {
                 node.stage.magic.setFile(node.stageInputs[0].lazy);
                 node.unresolvedInputs = node.rule.inputs.map(call);
@@ -121,7 +121,7 @@ function processTarget(target) {
                 newWorklist.push(node);
               } else if(allComplete(node.resolvedInputs.concat(node.stageInputs))) {
                 console.log("Do operation");
-              } else {
+              } else if(!node.output) {
                 var out = node.rule.output(node.resolvedInputs.map(function(i) { return i.file; }));
                 var outputNode = nodeForFile(nodes, out);
                 if(!outputNode) {
@@ -129,7 +129,11 @@ function processTarget(target) {
                   nodes.push(outputNode);
                   newWorklist.unshift(outputNode);
                 }
+                node.output = outputNode;
                 outputNode.inputs.push(node);
+                newWorklist.push(node);
+                change = true;
+              } else {
                 newWorklist.push(node);
               }
             }
@@ -164,16 +168,23 @@ function call(fn) {
 
 function checkStage(stage, node) {
   if(minimatch(node.file, stage.input)) {
+    console.log(node.file, stage.input);
     var newNodes = [];
 
     stage.rules.forEach(function(rule) {
       for(var i = 0; i < node.outputs.length; i++)
         if(node.outputs[i].rule === rule) return;
 
-      var operation = { id: id++, stageInputs: [node], resolvedInputs: [], rule: rule, stage: stage };
-      node.outputs.push(operation);
+      var operation;
+      if(stage.multi && rule.operation) {
+        operation = rule.operation;
+      } else {
+        operation = { id: id++, stageInputs: [node], resolvedInputs: [], rule: rule, stage: stage };
+        newNodes.push(operation);
+        if(stage.multi) rule.operation = operation;
+      }
 
-      newNodes.push(operation);
+      node.outputs.push(operation);
     });
 
     return { change: newNodes.length, new: newNodes };
@@ -203,7 +214,11 @@ MagicFile.prototype.setFile = function(lazy) {
 };
 
 function MagicFileList() {
-  
+  this._lazies = [];
+};
+
+MagicFileList.prototype.pushFile = function(file) {
+  this._lazies.push(file);
 };
 
 MagicFileList.prototype.array = function() {
