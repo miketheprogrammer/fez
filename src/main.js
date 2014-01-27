@@ -33,8 +33,19 @@ function processTarget(target) {
 
   var spec = {};
 
-  spec.rule = function(inputs, output, fn) {
-    currentStage.rules.push({inputs: toArray(inputs), output: output, fn: fn});
+  spec.rule = function(primaryInput, secondaryInputs, output, fn) {
+    if(arguments.length === 3) {
+      fn = output;
+      output = secondaryInputs;
+      secondaryInputs = [];
+    }
+
+    if(arguments.length === 3 && Array.isArray(primaryInput)) {
+      secondaryInputs = primaryInput;
+      primaryInput = undefined;
+    }
+
+    currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn });
   };
 
   spec.with = function(glob) {
@@ -63,7 +74,17 @@ function processTarget(target) {
       change = true;
 
   stages.forEach(function(stage) {
-    glob.sync(stage.input).forEach(function(filename) {
+    var inputs;
+    if(Array.isArray(stage.input)) {
+      inputs = [];
+      stage.input.forEach(function(g) {
+        inputs = inputs.concat(glob.sync(g));
+      });
+    } else {
+      inputs = glob.sync(stage.input);
+    }
+
+    inputs.forEach(function(filename) {
       var node = { id: id++, file: filename, inputs: [], outputs: [], lazy: new LazyFile(filename) };
       nodes.push(node);
       worklist.push(node);
@@ -97,16 +118,16 @@ function processTarget(target) {
             newWorklist.push(node);
           } else {
             if(!node.stage.multi) {
-              if(!node.unresolvedInputs) {
+              if(!node.unresolvedSecondaryInputs && node.rule.secondaryInputs) {
                 node.stage.magic.setFile(node.stageInputs[0].lazy);
-                node.unresolvedInputs = node.rule.inputs.map(call);
+                node.unresolvedSecondaryInputs = node.rule.secondaryInputs.map(call);
                 change = true;
               }
 
-              if(node.unresolvedInputs.length > 0) {
-                node.unresolvedInputs.forEach(function(input) {
+              if(node.rule.secondaryInputs && node.unresolvedSecondaryInputs.length > 0) {
+                node.unresolvedSecondaryInputs.forEach(function(input) {
                   if(input.isResolved()) {
-                    node.unresolvedInputs.splice(node.unresolvedInputs.indexOf(input), 1);
+                    node.unresolvedSecondaryInputs.splice(node.unresolvedSecondaryInputs.indexOf(input), 1);
                     var inputNode = nodeForFile(nodes, input.inspect().value());
                     if(!inputNode) {
                       inputNode = { id: id++, file: input.inspect().value(), inputs: [], outputs: [], lazy: new LazyFile(input.inspect().value()) };
@@ -114,15 +135,19 @@ function processTarget(target) {
                       newWorklist.unshift(inputNode);
                     }
                     inputNode.outputs.push(node);
-                    node.resolvedInputs.push(inputNode);
+                    node.resolvedSecondaryInputs.push(inputNode);
                     change = true;
                   }
                 });
+
                 newWorklist.push(node);
-              } else if(allComplete(node.resolvedInputs.concat(node.stageInputs))) {
-                console.log("Do operation");
+              } else if(allComplete(node.resolvedSecondaryInputs.concat(node.stageInputs))) {
               } else if(!node.output) {
-                var out = node.rule.output(node.resolvedInputs.map(function(i) { return i.file; }));
+                if(typeof node.rule.output === "function") {
+                  var out = node.rule.output(node.resolvedSecondaryInputs.map(function(i) { return i.file; }));
+                } else {
+                  out = node.rule.output;
+                }
                 var outputNode = nodeForFile(nodes, out);
                 if(!outputNode) {
                   outputNode = { id: id++, file: out, inputs: [], outputs: [], lazy: new LazyFile(out) };
@@ -135,6 +160,66 @@ function processTarget(target) {
                 change = true;
               } else {
                 newWorklist.push(node);
+              }
+            } else {
+              if(!node.unresolvedPrimaryInput) {
+                console.log(node.rule.fn.name);
+                console.log(node.rule.primaryInput);
+                node.unresolvedPrimaryInput = (node.rule.primaryInput || function() { return Promise.resolve(undefined); })();
+                console.log(node.unresolvedPrimaryInput);
+                change = true;
+              }
+
+              if(node.unresolvedPrimaryInput.isResolved()) {
+                node.resolvedPrimaryInput = node.unresolvedPrimaryInput.inspect().value();
+                delete node.unresolvedPrimaryInput;
+                change = true;
+              }
+
+              if(node.rule.secondaryInputs && !node.unresolvedSecondaryInputs) {
+                //node.stage.magic.setFile(node.stageInputs[0].lazy);
+                node.unresolvedSecondaryInputs = toArray(node.rule.secondaryInputs).map(call);
+                change = true;
+              }
+
+              if(node.unresolvedSecondaryInputs.length > 0) {
+                node.unresolvedSecondaryInputs.forEach(function(input) {
+                  if(input.isResolved()) {
+                    node.unresolvedSecondaryInputs.splice(node.unresolvedSecondaryInputs.indexOf(input), 1);
+                    var inputNode = nodeForFile(nodes, input.inspect().value());
+                    if(!inputNode) {
+                      inputNode = { id: id++, file: input.inspect().value(), inputs: [], outputs: [], lazy: new LazyFile(input.inspect().value()) };
+                      nodes.push(inputNode);
+                      newWorklist.unshift(inputNode);
+                    }
+                    inputNode.outputs.push(node);
+                    node.resolvedSecondaryInputs.push(inputNode);
+                    change = true;
+                  }
+                });
+
+                newWorklist.push(node);
+              }
+
+
+
+              if(!node.output && node.resolvedPrimaryInput) {
+                if(typeof node.rule.output === "function") {
+                  out = node.rule.output(node.resolvedPrimaryInput);
+                } else {
+                  out = node.resolvedPrimaryInput;
+                }
+
+                outputNode = nodeForFile(nodes, out);
+                if(!outputNode) {
+                  outputNode = { id: id++, file: out, inputs: [], outputs: [], lazy: new LazyFile(out) };
+                  nodes.push(outputNode);
+                  newWorklist.unshift(outputNode);
+                }
+                node.output = outputNode;
+                outputNode.inputs.push(node);
+                newWorklist.push(node);
+                change = true;
               }
             }
           }
@@ -150,7 +235,29 @@ function processTarget(target) {
 
 
   work().then(function() {
-    console.log(nodes);
+    process.stdout.write("digraph{");
+    nodes.forEach(function(node) {
+      if(node.file) {
+        process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
+      } else {
+        var name = node.rule.fn.name;
+
+        if(name === "")
+          name = "?";
+
+        process.stdout.write(node.id + " [label=\"" + name + "\"];");
+      }
+    });
+
+    nodes.forEach(function(node) {
+      if(node.output)
+        process.stdout.write(node.id + "->" + node.output.id + ";");
+      else if(node.outputs)
+        node.outputs.forEach(function(output) {
+          process.stdout.write(node.id + "->" + output.id + ";");
+        });
+    });
+    process.stdout.write("}");
   });
 };
 
@@ -167,8 +274,18 @@ function call(fn) {
 }
 
 function checkStage(stage, node) {
-  if(minimatch(node.file, stage.input)) {
-    console.log(node.file, stage.input);
+  var match = false;
+  
+  if(Array.isArray(stage.input)) {
+    stage.input.forEach(function(input) {
+      if(minimatch(node.file, input))
+        match = true;
+    });
+  } else if(minimatch(node.file, stage.input)) {
+    match = true;
+  }
+
+  if(match) {
     var newNodes = [];
 
     stage.rules.forEach(function(rule) {
@@ -179,7 +296,7 @@ function checkStage(stage, node) {
       if(stage.multi && rule.operation) {
         operation = rule.operation;
       } else {
-        operation = { id: id++, stageInputs: [node], resolvedInputs: [], rule: rule, stage: stage };
+        operation = { id: id++, stageInputs: [node], resolvedSecondaryInputs: [], rule: rule, stage: stage };
         newNodes.push(operation);
         if(stage.multi) rule.operation = operation;
       }
