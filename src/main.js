@@ -1,4 +1,5 @@
-var nopt = require("nopt"),
+var util = require("util"),
+    nopt = require("nopt"),
     ansi = require("ansi"),
     cursor = ansi(process.stdout),
     crypto = require("crypto"),
@@ -13,409 +14,231 @@ var nopt = require("nopt"),
     assert = require("assert"),
     Writable = require("stream").Writable,
     exec = require("child_process").exec,
-    Input = require("./input"),
-    generateBuildGraph = require("./graph2"),
-    fezUtil = require("./util"),
     xtend = require("xtend"),
-    util = require("util"),
-    mxtend = require("xtend/mutable");
+    mxtend = require("xtend/mutable"),
+    Input = require("./input.js"),
+    fezUtil = require("./util.js");
 
 function fez(module) {
   if(require.main === module) {
-    var options = xtend({ output: true }, getOptions()),
-        target = getTarget(options);
-    process.chdir(path.dirname(module.filename));
-    options.module = module;
-    processTarget(module.exports[target], false, options);
+    processTarget(module.exports.default);
   }
 }
 
-function getOptions() {
-  return nopt({
-    "verbose": Boolean,
-    "quiet": Boolean,
-    "clean": Boolean,
-    "dot": Boolean,
-    "no-output": Boolean
-  }, {
-    "v": "--verbose",
-    "q": "--quiet",
-    "c": "--clean",
-    "n": "--no-output"
-  });
-}
+var id = 0;
 
-function getTarget(options) {
-  return options.argv.remain.length ? options.argv.remain[0] : 'default';
-}
+function processTarget(target) {
+  var stages = [],
+      currentStage = null;
 
-function createRuleFns(rules) {
-  function defineRule(inputs, output, operation, options) {
-    if((arguments.length === 2) || (arguments.length === 3 && typeof operation === "object")) {
-      if(typeof operation === "object") options = operation;
-      operation = output;
-      output = undefined;
-    }
+  var spec = {};
 
-    options = options || {};
-
-    rules.push({ inputs: toArray(inputs), output: output, op: operation, always: options.always });
-  }
-
-  defineRule.each = function(input, output, operation, options) {
-    if((arguments.length === 2) || (arguments.length === 3 && typeof operation === "object")) {
-      if(typeof operation === "object") options = operation;
-      operation = output;
-      output = undefined;
-    }
-
-    options = options || {};
-
-    if(Array.isArray(input)) throw new Error("Input must be a string or function");
-
-    rules.push({ inputs: [input], output: output, op: operation, each: true, always: options.always });
+  spec.rule = function(inputs, output, fn) {
+    currentStage.rules.push({inputs: toArray(inputs), output: output, fn: fn});
   };
 
-
-  return defineRule;
-}
-
-function createStage() {
-  return { rules: [], stages: [], edges: [] };
-}
-
-function processTarget(target, isChild, options) {
-  var currentStage = new Stage(),
-      each = false,
-      spec = {},
-      requires = [];
-
-  spec.rule = function(input, output, operation, options) {
-    if(arguments.length === 2) {
-      operation = output;
-      output = undefined;
-    } else if(arguments.length === 3 && typeof operation === "object") {
-      operation = output;
-      options = operation;
-      output = undefined;
-    }
-
-    currentStage.nodes.push(new Rule(input, output, operation));
-  };
-
-  spec.stage = function(fn) {
-    runStage(fn);
-  };
-
-  spec.withEach = function(glob, fn) {
-    each = new MagicFile(glob);
-
-    var stage = runStage(fn.bind(null, each));
-
-    //Flag the stage as a withEach so that we can handle it properly down the line
-    stage.withEach = true;
-
-    //Make sure the stage is marked as depending on everything with this glob
-    stage.inputs.push(glob);
-
-    each = false;
-  };
-
-  spec.with = function(file, fn) {
-    var magic = new MagicFile(file);
-    var stage = runStage(fn.bind(null, magic));
-  };
-
-  function runStage(stageFunction) {
-    var stage = new Stage(),
-        prevStage = currentStage;
-
-    currentStage.nodes.push(stage);
-    currentStage = stage;
-    stageFunction();
-    currentStage = prevStage;
-
-    return stage;
+  spec.with = function(glob) {
+    return {
+      each: function(fn) {
+        var magic = new MagicFile(),
+            stage = currentStage = { input: glob, rules: [], magic: magic };
+        stages.push(stage);
+        fn(magic);
+      },
+      all: function(fn) {
+        var magic = new MagicFileList(),
+            stage = currentStage = { input: glob, rules: [], multi: true, magic: magic };
+        stages.push(stage);
+        fn(magic);
+      }
+    };
   };
 
   target(spec);
 
-  resolveRequires(currentStage, requires, isChild, options);
-}
+  var nodes = [],
+      worklist = [],
+      newWorklist = [],
+      ready = [],
+      change = true;
 
-function Rule(inputs, outputs, operation) {
-  this.inputs = toArray(inputs);
-  this.outputs = toArray(outputs);
-  this.operation = operation;
-}
-
-function Stage() {
-  this.inputs = [];
-  this.outputs = [];
-  this.nodes = [];
-}
-
-//A time-traveling file container
-function MagicFile() {
-
-}
-
-MagicFile.prototype.getFilename = function() {
-  return function() {
-    return this._file.getFilename();
-  }.bind(this);
-};
-
-MagicFile.prototype._setFile = function(file) {
-  this._file = file;
-};
-
-function resolveRequires(stage, requires, isChild, options) {
-  var anyWorkDone = false;
-  return (function nextRequire() {
-    if(requires.length > 0) {
-      return processTarget(requires.shift(), true, options).then(function(workDone) {
-        anyWorkDone = anyWorkDone || workDone;
-        return nextRequire();
-      });
-    } else {
-      return work(stage, options, isChild, anyWorkDone);
-    }
-  })();
-}
-
-function work(stage, options, isChild, prevWorkDone) {
-  var nodes = generateBuildGraph(glob.sync("**"), stage);
-  return;
-
-  if(options.verbose)
-    console.log(nodes);
-
-  if(options.dot) {
-    process.stdout.write("digraph{");
-    var id = 0;
-    nodes.forEach(function(node) {
-      node._id = id++;
-      if(node.isFile()) {
-        process.stdout.write(node._id + " [shape=box,label=\"" + node.file + "\"];");
-      } else {
-        var name = node.fn.name;
-
-        if(name === "")
-          name = "?";
-
-        process.stdout.write(node._id + " [label=\"" + name + "\"];");
-      }
+  stages.forEach(function(stage) {
+    glob.sync(stage.input).forEach(function(filename) {
+      var node = { id: id++, file: filename, inputs: [], outputs: [], lazy: new LazyFile(filename) };
+      nodes.push(node);
+      worklist.push(node);
     });
-
-    nodes.forEach(function(node) {
-      if(node.output)
-        process.stdout.write(node._id + "->" + node.output._id + ";");
-      else if(node.outputs)
-        node.outputs.forEach(function(output) {
-          process.stdout.write(node._id + "->" + output._id + ";");
-        });
-    });
-    process.stdout.write("}");
-    return Promise.resolve(true);
-  } else if(options.clean) {
-    var cleaned = clean(nodes, options);
-    if(!cleaned && !isChild && !options.quiet && !prevWorkDone && lastStage)
-      console.log("Nothing to clean.");
-    
-    return Promise.resolve(cleaned || prevWorkDone);
-  } else {
-    return build(nodes, isChild, prevWorkDone, stages.length === 0, options);
-  }
-  //});
-};
-
-function clean(nodes, options) {
-  var files = glob.sync(".fez.*"),
-      complete = 0,
-      any = false;
-
-
-  nodes.forEach(function(node) {
-    if(node.isFile() && node.inputs.length > 0) files.push(node.file);
   });
 
-  files.forEach(function(file) {
-    try {
-      fs.unlinkSync(file);
-      any = true;
-      
-      if(!options.quiet) {
-        process.stdout.write("Removing ");
-        cursor.red();
-        console.log(file);
-        cursor.reset();
-      }
-    } catch(e) {}
-  });
 
-  return any;
-}
-
-function build(nodes, isChild, prevWorkDone, lastStage, options) {
-  var working = [];
-
-  nodes.forEach(function(node) {
-    if(node.isFile() && node.inputs.length === 0) working.push(node);
-  });
-
-  return digest(nodes, working, {}, options).then(done.bind(this, options, isChild, prevWorkDone, lastStage));
-}
-
-function digest(nodes, working, changelist, options) {
-  if(working.length === 0) return Promise.resolve(false);
-
-  var newWorking = [];
-  var promises = [];
-  working.forEach(function(node) {
-    if(node.isFile()) {
-      node.outputs.forEach(function(out) {
-        out.inComplete++;
-        if(newWorking.indexOf(out) === -1)
-          newWorking.push(out);
-      });
-    } else {//It's an operation
-      //Is it ready to go?
-      if(node.inComplete === node.inputs.length) {
-        //Yes, do the operation and put the output on the working list
-        promises.push(performOperation(options, changelist, node));
-        if(node.output) newWorking.push(node.output);
-      } else {
-        //No, put it back on the working list
-        newWorking.push(node);
-      }
-    }
-  });
-
-  return Promise.settle(promises).then(function(results) {
-    var anyRejected = false,
-        anyWorkDone = false;
-
-    results.forEach(function(i) {
-      if(i.isRejected()) {
-        anyRejected = anyWorkDone = true;
-        if(options.verbose) console.log("Rejected:", i.error().stack);
-      } else {
-        anyWorkDone = anyWorkDone || i.value();
-      }
-    });
-
-    if(anyRejected) {
-      if(!options.quiet)
-        console.log("An operation has failed. Aborting.");
-      return anyWorkDone;
-    } else {
-      return digest(nodes, newWorking, changelist, options).then(function(workDone) {
-        return workDone || anyWorkDone;
-      });
-    }
-  });
-}
-
-function done(options, isChild, prevWorkDone, lastStage, anyWorkDone) {
-  if(!anyWorkDone && !options.quiet) {
-    if(!isChild && !prevWorkDone && lastStage)
-      console.log("Nothing to be done.");
-
-    return false || prevWorkDone;
-  } else {
-    if(!isChild && Math.random() < 0.0001 && !options.quiet) console.log("We’re all stories, in the end.");
-    return true;
-  }
-}
-
-function performOperation(options, changelist, op) {
-  if(options.verbose) {
-    if(op.output)
-      console.log(op.inputs.map(function(i) { return i.file; }).join(" "), "->", op.output.file);
-    else
-      console.log(op.inputs.map(function(i) { return i.file; }).join(" "), "-/");
-  }
-
-  var inputs = op.inputs.map(function(i) { return i.file; }),
-      output = op.output ? op.output.file : null,
-      out;
-
-  if(output) {
-    if(needsUpdate(inputs, [output], changelist, options)) {
-      if(options.output) {
-        out = op.fn(buildInputs(inputs), [output]);
-        return processOutput(out, output, inputs, options);
-      } else {
-        changelist[output] = true;
-        printCreating(output);
-        return true;
-      }
-    } else {
-      return false;
-    }
-  } else { //It's a task
-    out = op.fn(buildInputs(inputs));
-
-    if(isPromise(out)) return out.then(function() { return true; });
-    else return true;
-  }
-}
-
-function processOutput(out, output, inputs, options) {
-  if(isPromise(out)) {
-    return out.then(function(out) {
-      return processOutput(out, output, inputs, options);
-    });
-  } else if(out instanceof Writable) {
-    if(!options.quiet) 
-      printCreating(output);
-
+  function work() {
     return new Promise(function(resolve, reject) {
-      out.pipe(fs.createWriteStream(output));
-      out.on("end", function() {
-        resolve();
-      });
+      (function itr(change) {
+        if(!change) {
+          resolve();
+          return;
+        }
+
+        change = false;
+        
+        while(worklist.length > 0) {
+          var node = worklist.shift();
+
+          if(node.file) {
+            stages.forEach(function(stage) {
+              var res = checkStage(stage, node);
+              change = change || res.change;
+              res.new.forEach(function(node) {
+                nodes.push(node);
+                newWorklist.unshift(node);
+              });
+            });
+            newWorklist.push(node);
+
+          } else {
+            if(!node.multi) {
+              if(!node.unresolvedInputs) {
+                node.stage.magic.setFile(node.stageInputs[0].lazy);
+                node.unresolvedInputs = node.rule.inputs.map(call);
+                change = true;
+              }
+
+              if(node.unresolvedInputs.length > 0) {
+                node.unresolvedInputs.forEach(function(input) {
+                  if(input.isResolved()) {
+                    node.unresolvedInputs.splice(node.unresolvedInputs.indexOf(input), 1);
+                    var inputNode = nodeForFile(nodes, input.inspect().value());
+                    if(!inputNode) {
+                      inputNode = { id: id++, file: input.inspect().value(), inputs: [], outputs: [], lazy: new LazyFile(input.inspect().value()) };
+                      nodes.push(inputNode);
+                      newWorklist.unshift(inputNode);
+                    }
+                    inputNode.outputs.push(node);
+                    node.resolvedInputs.push(inputNode);
+                    change = true;
+                  }
+                });
+                newWorklist.push(node);
+              } else if(allComplete(node.resolvedInputs.concat(node.stageInputs))) {
+                console.log("Do operation");
+              } else {
+                var out = node.rule.output(node.resolvedInputs.map(function(i) { return i.file; }));
+                var outputNode = nodeForFile(nodes, out);
+                if(!outputNode) {
+                  outputNode = { id: id++, file: out, inputs: [], outputs: [], lazy: new LazyFile(out) };
+                  nodes.push(outputNode);
+                  newWorklist.unshift(outputNode);
+                }
+                outputNode.inputs.push(node);
+                newWorklist.push(node);
+              }
+            }
+          }
+        }
+
+        worklist = newWorklist;
+        newWorklist = [];
+        
+        setImmediate(itr.bind(this, change));
+      })(true);
     });
-  } else if(out instanceof Buffer || typeof out === "string") {
-    if(!options.quiet) 
-      printCreating(output);
-    return writep(output, out);
-  } else if(!out) {
-    return writep(output, new Buffer(0));
-  } else if(out === true) {
-    if(!options.quiet) 
-      printCreating(output);
-  } else if(typeof out === "function") {
-    throw new Error("Output can't be a function. Did you forget to call the operation in your rule (e.g op())?");
-  } else {
-    throw new Error("Invalid operation output (" + Object.getPrototypeOf(out).constructor.name + '):' + out);
   }
 
+
+  work().then(function() {
+    console.log(nodes);
+  });
+};
+
+function nodeForFile(nodes, file) {
+  for(var i = 0; i < nodes.length; i++) {
+    if(nodes[i].file === file) return nodes[i];
+  }
+
+  return undefined;
+}
+
+function call(fn) {
+  return fn();
+}
+
+function checkStage(stage, node) {
+  if(minimatch(node.file, stage.input)) {
+    var newNodes = [];
+
+    stage.rules.forEach(function(rule) {
+      for(var i = 0; i < node.outputs.length; i++)
+        if(node.outputs[i].rule === rule) return;
+
+      var operation = { id: id++, stageInputs: [node], resolvedInputs: [], rule: rule, stage: stage };
+      node.outputs.push(operation);
+
+      newNodes.push(operation);
+    });
+
+    return { change: newNodes.length, new: newNodes };
+  } else {
+    return { change: false, new: [] };
+  }
+}
+
+function allComplete(nodes) {
+  for(var i = 0; i < nodes.length; i++)
+    if(!nodes[i].complete) return false;
   return true;
 }
 
-function printCreating(output) {
-  process.stdout.write("Creating ");
-  cursor.green();
-  process.stdout.write(output + "\n"); 
-  cursor.reset();
-}
+function MagicFile() {
 
-function buildInputs(files) {
-  var inputs = [];
-  files.forEach(function(file) {
-    inputs.push(new Input(file));
-  });
+};
 
-  inputs.asBuffers = function() {
-    return this.map(function(i) { return i.asBuffer(); });
+MagicFile.prototype.name = function() {
+  return function() {
+    return this._lazy.getFilename();
+  }.bind(this);
+};
+
+MagicFile.prototype.setFile = function(lazy) {
+  this._lazy = lazy;
+};
+
+function MagicFileList() {
+  
+};
+
+MagicFileList.prototype.array = function() {
+  return function() {
   };
+};
 
-  return inputs;
-}
+function LazyFile(filename) {
+  this._filename = Promise.defer();
+  this._asBuffer = Promise.defer();
 
-mxtend(fez, fezUtil);
+  if(filename) this._filename.resolve(filename);
+};
+
+LazyFile.prototype._setFilename = function(filename) {
+  this._filename.resolve(filename);
+};
+
+LazyFile.prototype._loadFile = function(filename) {
+  if(filename)
+    this._setFilename(filename);
+
+  this.getFilename().then(function(filename) {
+    var file = new File(filename);
+    return file.asBuffer().then(this._asBuffer.resolve);
+  });
+};
+
+LazyFile.prototype.getFilename = function() {
+  return this._filename.promise;
+};
+
+LazyFile.prototype.asBuffer = function() {
+  return this._asBuffer.promise;
+};
 
 function toArray(obj) {
   if(Array.isArray(obj)) return obj;
@@ -540,4 +363,51 @@ function resolveRuleInput(input) {
 }
 
 module.exports = fez;
+
+
+fez.exec = function(command) {
+  function ex(inputs, outputs) {
+    var ifiles = toArray(inputs).map(function(i) { return i.getFilename(); }).join(" "),
+        ofiles = outputs.join(" "),
+        pcommand = command.
+          replace("%i", ifiles).
+          replace("%o", ofiles);
+
+    return new Promise(function(resolve, reject) {
+      exec(pcommand, function(err) {
+        if(err) reject(err);
+        else resolve(true);
+      });
+    });
+  };
+
+  ex.value = command;
+  return ex;
+};
+
+fez.mapFile = function(pattern) {
+  return function(inputs) {
+    var input = inputs[0];
+    var f = (function() {
+      var basename = path.basename(input);
+      var hidden = false;
+      if(basename.charAt(0) == ".") {
+        hidden = true;
+        basename = basename.slice(1);
+      }
+
+      var split = basename.split(".");
+      if(split.length > 1) {
+        if(hidden) return "." + split.slice(0, -1).join(".");
+        else return split.slice(0, -1).join(".");
+      } else {
+        if(hidden) return "." + basename;
+        else return basename;
+      }
+    })();
+
+    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
+  };
+};
+
 
