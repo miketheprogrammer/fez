@@ -41,9 +41,11 @@ function processTarget(target) {
       secondaryInputs = [];
     }
 
-    if(arguments.length === 3 && Array.isArray(primaryInput)) {
-      secondaryInputs = primaryInput;
-      primaryInput = undefined;
+    if(typeof output === "string") {
+      var out = output;
+      output = function() {
+        return Promise.resolve(out);
+      };
     }
 
     currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
@@ -54,14 +56,18 @@ function processTarget(target) {
       each: function(fn) {
         var magic = new MagicFile(),
             stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
+
         stages.push(stage);
         fn(magic);
+        currentStage = null;
       },
       all: function(fn) {
         var magic = new MagicFileList(),
             stage = currentStage = { inputs: toArray(glob), rules: [], multi: true, magic: magic };
+
         stages.push(stage);
         fn(magic);
+        currentStage = null;
       }
     };
   };
@@ -70,6 +76,13 @@ function processTarget(target) {
 
   var nodes = new Set();
 
+  loadInitialNodes(nodes, stages);
+  renderGraph(nodes);
+
+  work(nodes, stages).then(renderGraph);
+};
+
+function loadInitialNodes(nodes, stages) {
   stages.forEach(function(stage) {
     var inputs;
     if(Array.isArray(stage.input)) {
@@ -87,34 +100,40 @@ function processTarget(target) {
       nodeForFile(nodes, filename);
     });
   });
+}
 
-  work(nodes, stages).then(printGraph);
-};
-
-function printGraph(nodes) {
-  process.stdout.write("digraph{");
+var graphnum = 0;
+function renderGraph(nodes) {
+  var str = "";
+  str += "digraph{";
   nodes.array().forEach(function(node) {
     if(node.file) {
-      process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
+      str += node.id + " [shape=box,label=\"" + node.file + "\"];";
     } else {
       var name = node.rule.fn.name;
 
       if(name === "")
         name = "?";
 
-      process.stdout.write(node.id + " [label=\"" + name + "\"];");
+      str += node.id + " [label=\"" + name + "\"];";
     }
   });
 
   nodes.array().forEach(function(node) {
     if(node.output)
-      process.stdout.write(node.id + "->" + node.output.id + ";");
+      str += node.id + "->" + node.output.id + ";";
     else if(node.outputs)
       node.outputs.forEach(function(output) {
-        process.stdout.write(node.id + "->" + output.id + ";");
+        str += node.id + "->" + output.id + ";";
       });
   });
-  process.stdout.write("}");
+  str += "}";
+ 
+  var numstr = (graphnum++).toString();
+  numstr = "0000".substr(numstr.length) + numstr;
+  exec("echo '" + str + "' | dot -Tpng -o graph" + numstr + ".png", function(err) {
+    if(err) throw err;
+  });
 }
 
 //Takes a list of nodes and a set of rules and returns a list of nodes when it reaches a fixed point
@@ -154,16 +173,30 @@ function evaluateOperation(nodes, stages, node) {
     return true;
   }
 
-  if(node.unresolvedPrimaryInput.isResolved() && !node.isPrimaryInputResolved) {
+  if(node.unresolvedPrimaryInput.isResolved() && !node.resolvedPrimaryInput) {
     node.resolvedPrimaryInput = node.unresolvedPrimaryInput.inspect().value();
-    node.isPrimaryInputResolved = true;
+    console.log(node.resolvedPrimaryInput);
+    var input = nodeForFile(nodes, node.resolvedPrimaryInput);
+    input.outputs.push(node);
+    node.primaryInput = input;
 
-    var out;
-    if(node.resolvedPrimaryInput) out = nodeForFile(nodes, node.rule.output(node.resolvedPrimaryInput));
-    else out = nodeForFile(nodes, node.rule.output());
+    renderGraph(nodes);
 
+    return true;
+  }
+
+  if(!node.unresolvedOutput) {
+    if(typeof node.rule.output ===  "string") node.unresolvedOutput = Promise.resolve(node.rule.output);
+    else node.unresolvedOutput = node.rule.output(node.unresolvedPrimaryInput);
+    return true;
+  }
+  
+  if(node.unresolvedOutput.isResolved() && !node.resolvedOutput) {
+    node.resolvedOutput = node.unresolvedOutput.inspect().value();
+    var out = nodeForFile(nodes, node.resolvedOutput);
     node.outputs.push(out);
     out.inputs.push(node);
+    renderGraph(nodes);
 
     return true;
   }
@@ -189,6 +222,7 @@ function matchAgainstStage(nodes, node, stage) {
       node.outputs.push(operation);
       operation.stageInputs.push(node);
       if(nodes.insert(operation)) change = true;
+      renderGraph(nodes);
     });
 
     return change;
@@ -232,6 +266,7 @@ function nodeForFile(nodes, file) {
 
   var node = { id: id++, file: file, inputs: [], outputs: [], lazy: new LazyFile(file) };
   nodes.insert(node);
+
   return node;
 }
 
@@ -443,27 +478,28 @@ fez.exec = function(command) {
 };
 
 fez.mapFile = function(pattern) {
-  return function(inputs) {
-    var input = inputs[0];
-    var f = (function() {
-      var basename = path.basename(input);
-      var hidden = false;
-      if(basename.charAt(0) == ".") {
-        hidden = true;
-        basename = basename.slice(1);
-      }
+  return function(input) {
+    return input.then(function(filename) {
+      var f = (function() {
+        var basename = path.basename(filename);
+        var hidden = false;
+        if(basename.charAt(0) == ".") {
+          hidden = true;
+          basename = basename.slice(1);
+        }
 
-      var split = basename.split(".");
-      if(split.length > 1) {
-        if(hidden) return "." + split.slice(0, -1).join(".");
-        else return split.slice(0, -1).join(".");
-      } else {
-        if(hidden) return "." + basename;
-        else return basename;
-      }
-    })();
+        var split = basename.split(".");
+        if(split.length > 1) {
+          if(hidden) return "." + split.slice(0, -1).join(".");
+          else return split.slice(0, -1).join(".");
+        } else {
+          if(hidden) return "." + basename;
+          else return basename;
+        }
+      })();
 
-    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
+      return pattern.replace("%f", f).replace("%F", path.basename(filename)).replace("%d", path.dirname(filename)).replace("%e", path.extname(filename)).replace("./", "");
+    });
   };
 };
 
