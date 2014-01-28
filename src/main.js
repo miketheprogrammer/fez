@@ -38,7 +38,7 @@ function processTarget(target) {
     if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
-      secondaryInputs = [];
+      secondaryInputs = undefined;
     }
 
     if(typeof output === "string") {
@@ -48,14 +48,15 @@ function processTarget(target) {
       };
     }
 
+    //console.log(primaryInput, secondaryInputs, output, fn, currentStage);
     currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
   };
 
   spec.with = function(glob) {
     return {
       each: function(fn) {
-        var magic = new MagicFile(),
-            stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
+        var magic = new MagicFile();
+        stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
 
         stages.push(stage);
         fn(magic);
@@ -75,11 +76,10 @@ function processTarget(target) {
   target(spec);
 
   var nodes = new Set();
-
+  setTimeout(function() {
+    printGraph(nodes);
+  }, 500);
   loadInitialNodes(nodes, stages);
-  renderGraph(nodes);
-
-  work(nodes, stages).then(renderGraph);
 };
 
 function loadInitialNodes(nodes, stages) {
@@ -97,120 +97,165 @@ function loadInitialNodes(nodes, stages) {
     }
 
     inputs.forEach(function(filename) {
-      nodeForFile(nodes, filename);
+      processNode(nodes, stages, nodeForFile(nodes, filename));
     });
   });
 }
 
-var graphnum = 0;
-function renderGraph(nodes) {
-  var str = "";
-  str += "digraph{";
+function printNodes(nodes) {
+  return;
   nodes.array().forEach(function(node) {
     if(node.file) {
-      str += node.id + " [shape=box,label=\"" + node.file + "\"];";
+      process.stdout.write(node.file + " ");
     } else {
       var name = node.rule.fn.name;
 
       if(name === "")
         name = "?";
 
-      str += node.id + " [label=\"" + name + "\"];";
+      if(node.complete) name += " ✓";
+
+      process.stdout.write(name + " ");
+    }
+  });
+
+  process.stdout.write("\n");
+}
+
+function printGraph(nodes) {
+  process.stdout.write("digraph{");
+  nodes.array().forEach(function(node) {
+    if(node.file) {
+      process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
+    } else {
+      var name = node.rule.fn.name;
+
+      if(name === "")
+        name = "?";
+
+      if(node.complete) name += " ✓";
+
+      process.stdout.write(node.id + " [label=\"" + name + "\"];");
     }
   });
 
   nodes.array().forEach(function(node) {
     if(node.output)
-      str += node.id + "->" + node.output.id + ";";
+      process.stdout.write(node.id + "->" + node.output.id + ";");
     else if(node.outputs)
       node.outputs.forEach(function(output) {
-        str += node.id + "->" + output.id + ";";
+        process.stdout.write(node.id + "->" + output.id + ";");
       });
   });
-  str += "}";
- 
-  var numstr = (graphnum++).toString();
-  numstr = "0000".substr(numstr.length) + numstr;
-  exec("echo '" + str + "' | dot -Tpng -o graph" + numstr + ".png", function(err) {
-    if(err) throw err;
-  });
-}
-
-//Takes a list of nodes and a set of rules and returns a list of nodes when it reaches a fixed point
-function work(nodes, stages) {
-  nodes = nodes.clone();
-  return new Promise(function(resolve, reject) {
-    var change = false;
-
-    nodes.array().forEach(function(node) {
-      change = change || processNode(nodes, stages, node);
-    });
-
-    resolve(change);
-  }).then(function(change) {
-    if(change) return work(nodes, stages);
-    else return nodes;
-  });
+  process.stdout.write("}");
 }
 
 function processNode(nodes, stages, node) {
+  nodes.insert(node);
+  printNodes(nodes);
   if(node.complete) return false;
   if(node.file) return checkFile(nodes, stages, node);
   else return evaluateOperation(nodes, stages, node);
 }
 
 function checkFile(nodes, stages, node) {
-  return any(stages.map(function(stage) {
-    return matchAgainstStage(nodes, node, stage);
-  }));
+  stages.map(function(stage) {
+    return matchAgainstStage(nodes, stages, node, stage);
+  });
 }
 
 function evaluateOperation(nodes, stages, node) {
-  if(!node.unresolvedPrimaryInput) {
+  if(!node.rule.stage.multi)
+    node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
+  node.primaryInputPromise = node.rule.primaryInput();
+
+  if(typeof node.rule.output ===  "string") node.unresolvedOutput = Promise.resolve(node.rule.output);
+  else node.unresolvedOutput = node.rule.output(node.primaryInputPromise);
+
+  if(node.rule.secondaryInputs && !node.unresolvedSecondaryInputs) {
     if(!node.rule.stage.multi)
       node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
-    node.unresolvedPrimaryInput = node.rule.primaryInput();
-    return true;
+    node.unresolvedSecondaryInputs = node.rule.secondaryInputs();
   }
 
-  if(node.unresolvedPrimaryInput.isResolved() && !node.resolvedPrimaryInput) {
-    node.resolvedPrimaryInput = node.unresolvedPrimaryInput.inspect().value();
-    console.log(node.resolvedPrimaryInput);
-    var input = nodeForFile(nodes, node.resolvedPrimaryInput);
+  node.primaryInputPromise.then(function(resolved) {
+    var input = nodeForFile(nodes, resolved);
     input.outputs.push(node);
     node.primaryInput = input;
 
-    renderGraph(nodes);
+    processNode(nodes, stages, input);
+  });
 
-    return true;
-  }
-
-  if(!node.unresolvedOutput) {
-    if(typeof node.rule.output ===  "string") node.unresolvedOutput = Promise.resolve(node.rule.output);
-    else node.unresolvedOutput = node.rule.output(node.unresolvedPrimaryInput);
-    return true;
-  }
-  
-  if(node.unresolvedOutput.isResolved() && !node.resolvedOutput) {
+  node.unresolvedOutput.then(function() {
     node.resolvedOutput = node.unresolvedOutput.inspect().value();
     var out = nodeForFile(nodes, node.resolvedOutput);
     node.outputs.push(out);
     out.inputs.push(node);
-    renderGraph(nodes);
+    processNode(nodes, stages, out);
+  });
 
-    return true;
+  if(node.rule.secondaryInputs && node.unresolvedSecondaryInputs.isResolved() && !node.resolvedSecondaryInputs) {
+    node.resolvedSecondaryInputs = node.unresolvedSecondaryInputs.inspect().value();
+    console.log(node.resolvedSecondaryInputs);
+    node.resolvedSecondaryInputs.forEach(function(file) {
+      var input = nodeForFile(nodes, file);
+      input.outputs.push(node);
+      node.secondaryInputs.push(input);
+      processNode(nodes, stages, input);
+    });
   }
-
-  return false;
 }
 
-fez.none = function() {
-  return function() {
-    return Promise.resolve();
-  };
+function build(nodes) {
+  var working = [];
+
+  nodes.array().forEach(function(node) {
+    if(node.file && node.inputs.length === 0) working.push(node);
+  });
+
+  return digest(nodes, working).then(done);
+}
+
+function digest(nodes, working) {
+  return new Promise(function(resolve, reject) {
+
+  });
 };
 
-function matchAgainstStage(nodes, node, stage) {
+function done() {
+  console.log("Done.");
+};
+
+function sumTruthy(arr) {
+  return arr.reduce(function(prev, cur) {
+    if(cur) return prev + 1;
+    return prev;
+  }, 0);
+};
+
+function opInComplete(node) {
+  assert(!node.file);
+  return 1;
+};
+
+function opInCount(node) {
+  assert(!node.file);
+  return 1;
+};
+
+function opIsReady(node) {
+  return opInComplete(node) === opInCount(node);
+}
+
+function prop(p) {
+  return function(el) {
+    return el[p];
+  };
+}
+
+var file = prop("file");
+
+function matchAgainstStage(nodes, stages, node, stage) {
   assert(node.file);
   if(isStageInOutputs(node.outputs, stage)) return false;
   var anyMatch = any(stage.inputs.map(minimatch.bind(this, node.file)));
@@ -221,8 +266,7 @@ function matchAgainstStage(nodes, node, stage) {
       var operation = getOperationForRule(rule);
       node.outputs.push(operation);
       operation.stageInputs.push(node);
-      if(nodes.insert(operation)) change = true;
-      renderGraph(nodes);
+      processNode(nodes, stages, operation);
     });
 
     return change;
@@ -234,10 +278,10 @@ function matchAgainstStage(nodes, node, stage) {
 function getOperationForRule(rule) {
   if(rule.stage.multi) {
     if(!rule.operation)
-      rule.operation = { id: id++, stageInputs: [], resolvedSecondaryInputs: [], outputs: [], rule: rule };
+      rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule };
     return rule.operation;
   } else {
-    return { id: id++, stageInputs: [], resolvedSecondaryInputs: [], outputs: [], rule: rule };
+    return { id: id++, stageInputs: [], outputs: [], rule: rule };
   }
 }
 
@@ -254,7 +298,6 @@ function any(arr) {
 }
 
 function every(arr) {
-  console.log(arr);
   for(var i = 0; i < arr.length; i++)
     if(!arr[i]) return false;
   return true;
@@ -265,7 +308,6 @@ function nodeForFile(nodes, file) {
     if(nodes.array()[i].file === file) return nodes.array()[i];
 
   var node = { id: id++, file: file, inputs: [], outputs: [], lazy: new LazyFile(file) };
-  nodes.insert(node);
 
   return node;
 }
@@ -277,7 +319,6 @@ function callfn(fn) {
 }
 
 function MagicFile() {
-
 };
 
 MagicFile.prototype.name = function() {
@@ -290,6 +331,10 @@ MagicFile.prototype.setFile = function(lazy) {
   this._lazy = lazy;
 };
 
+MagicFile.prototype.inspect = function() {
+  return this._lazy;
+};
+
 function MagicFileList() {
   this._lazies = [];
 };
@@ -300,6 +345,8 @@ MagicFileList.prototype.pushFile = function(file) {
 
 MagicFileList.prototype.array = function() {
   return function() {
+    return new Promise(function(resolve, reject) {
+    });
   };
 };
 
@@ -319,8 +366,10 @@ LazyFile.prototype._loadFile = function(filename) {
     this._setFilename(filename);
 
   this.getFilename().then(function(filename) {
-    var file = new File(filename);
-    return file.asBuffer().then(this._asBuffer.resolve);
+    fs.readFile(filename, function(err, data) {
+      if(err) this._asBuffer.reject(err);
+      else this._asBuffer.resolve(data);
+    });
   });
 };
 
@@ -350,8 +399,8 @@ function writep(file, data) {
   });
 }
 
-function needsUpdate(inputs, outputs, changelist, options) {
-  var stat = fs.statSync(options.module.filename),
+function needsUpdate(inputs, outputs, changelist) {
+  var stat = fs.statSync("./fez.js"),
       mtime = stat.mtime.getTime();
 
   for(var i in inputs)
@@ -391,6 +440,11 @@ function needsUpdate(inputs, outputs, changelist, options) {
   
   return (mtime > oldestOutput) || (newestInput > oldestOutput);
 }
+
+function allInputs(op) {
+  if(op.secondaryInputs) return [op.primaryInput].concat(op.secondaryInputs);
+  else return [op.primaryInput];
+};
 
 //(ibw) should switch to a real set data structure for maximum performance
 function union(a, b) {

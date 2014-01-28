@@ -5,7 +5,7 @@ var fez = require("../../src/main.js"),
 
 exports.build = function(spec) {
   spec.with("dist/*.min.css").all(function(files) {
-    spec.rule([files], "dist.min.css", concat());
+    spec.rule(files.array(), "dist.min.css", concat());
   });
 
   spec.with("css/*.css").each(function(file) {
