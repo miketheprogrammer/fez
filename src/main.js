@@ -17,6 +17,7 @@ var util = require("util"),
     xtend = require("xtend"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
+    Set = require("./set.js"),
     fezUtil = require("./util.js");
 
 function fez(module) {
@@ -45,20 +46,20 @@ function processTarget(target) {
       primaryInput = undefined;
     }
 
-    currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn });
+    currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
   };
 
   spec.with = function(glob) {
     return {
       each: function(fn) {
         var magic = new MagicFile(),
-            stage = currentStage = { input: glob, rules: [], magic: magic };
+            stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
         stages.push(stage);
         fn(magic);
       },
       all: function(fn) {
         var magic = new MagicFileList(),
-            stage = currentStage = { input: glob, rules: [], multi: true, magic: magic };
+            stage = currentStage = { inputs: toArray(glob), rules: [], multi: true, magic: magic };
         stages.push(stage);
         fn(magic);
       }
@@ -67,11 +68,7 @@ function processTarget(target) {
 
   target(spec);
 
-  var nodes = [],
-      worklist = [],
-      newWorklist = [],
-      ready = [],
-      change = true;
+  var nodes = new Set();
 
   stages.forEach(function(stage) {
     var inputs;
@@ -81,239 +78,167 @@ function processTarget(target) {
         inputs = inputs.concat(glob.sync(g));
       });
     } else {
-      inputs = glob.sync(stage.input);
+      inputs = flatten(stage.inputs.map(function(input) {
+        return glob.sync(input);
+      }));
     }
 
     inputs.forEach(function(filename) {
-      var node = { id: id++, file: filename, inputs: [], outputs: [], lazy: new LazyFile(filename) };
-      nodes.push(node);
-      worklist.push(node);
+      nodeForFile(nodes, filename);
     });
   });
 
-
-  function work() {
-    return new Promise(function(resolve, reject) {
-      (function itr(change) {
-        if(!change) {
-          resolve();
-          return;
-        }
-
-        change = false;
-        
-        while(worklist.length > 0) {
-          var node = worklist.shift();
-
-          if(node.file) {
-            stages.forEach(function(stage) {
-              var res = checkStage(stage, node);
-              change = change || res.change;
-              res.new.forEach(function(node) {
-                nodes.push(node);
-                newWorklist.unshift(node);
-              });
-            });
-
-            newWorklist.push(node);
-          } else {
-            if(!node.stage.multi) {
-              if(!node.unresolvedSecondaryInputs && node.rule.secondaryInputs) {
-                node.stage.magic.setFile(node.stageInputs[0].lazy);
-                node.unresolvedSecondaryInputs = node.rule.secondaryInputs.map(call);
-                change = true;
-              }
-
-              if(node.rule.secondaryInputs && node.unresolvedSecondaryInputs.length > 0) {
-                node.unresolvedSecondaryInputs.forEach(function(input) {
-                  if(input.isResolved()) {
-                    node.unresolvedSecondaryInputs.splice(node.unresolvedSecondaryInputs.indexOf(input), 1);
-                    var inputNode = nodeForFile(nodes, input.inspect().value());
-                    if(!inputNode) {
-                      inputNode = { id: id++, file: input.inspect().value(), inputs: [], outputs: [], lazy: new LazyFile(input.inspect().value()) };
-                      nodes.push(inputNode);
-                      newWorklist.unshift(inputNode);
-                    }
-                    inputNode.outputs.push(node);
-                    node.resolvedSecondaryInputs.push(inputNode);
-                    change = true;
-                  }
-                });
-
-                newWorklist.push(node);
-              } else if(allComplete(node.resolvedSecondaryInputs.concat(node.stageInputs))) {
-              } else if(!node.output) {
-                if(typeof node.rule.output === "function") {
-                  var out = node.rule.output(node.resolvedSecondaryInputs.map(function(i) { return i.file; }));
-                } else {
-                  out = node.rule.output;
-                }
-                var outputNode = nodeForFile(nodes, out);
-                if(!outputNode) {
-                  outputNode = { id: id++, file: out, inputs: [], outputs: [], lazy: new LazyFile(out) };
-                  nodes.push(outputNode);
-                  newWorklist.unshift(outputNode);
-                }
-                node.output = outputNode;
-                outputNode.inputs.push(node);
-                newWorklist.push(node);
-                change = true;
-              } else {
-                newWorklist.push(node);
-              }
-            } else {
-              if(!node.unresolvedPrimaryInput) {
-                console.log(node.rule.fn.name);
-                console.log(node.rule.primaryInput);
-                node.unresolvedPrimaryInput = (node.rule.primaryInput || function() { return Promise.resolve(undefined); })();
-                console.log(node.unresolvedPrimaryInput);
-                change = true;
-              }
-
-              if(node.unresolvedPrimaryInput.isResolved()) {
-                node.resolvedPrimaryInput = node.unresolvedPrimaryInput.inspect().value();
-                delete node.unresolvedPrimaryInput;
-                change = true;
-              }
-
-              if(node.rule.secondaryInputs && !node.unresolvedSecondaryInputs) {
-                //node.stage.magic.setFile(node.stageInputs[0].lazy);
-                node.unresolvedSecondaryInputs = toArray(node.rule.secondaryInputs).map(call);
-                change = true;
-              }
-
-              if(node.unresolvedSecondaryInputs.length > 0) {
-                node.unresolvedSecondaryInputs.forEach(function(input) {
-                  if(input.isResolved()) {
-                    node.unresolvedSecondaryInputs.splice(node.unresolvedSecondaryInputs.indexOf(input), 1);
-                    var inputNode = nodeForFile(nodes, input.inspect().value());
-                    if(!inputNode) {
-                      inputNode = { id: id++, file: input.inspect().value(), inputs: [], outputs: [], lazy: new LazyFile(input.inspect().value()) };
-                      nodes.push(inputNode);
-                      newWorklist.unshift(inputNode);
-                    }
-                    inputNode.outputs.push(node);
-                    node.resolvedSecondaryInputs.push(inputNode);
-                    change = true;
-                  }
-                });
-
-                newWorklist.push(node);
-              }
-
-
-
-              if(!node.output && node.resolvedPrimaryInput) {
-                if(typeof node.rule.output === "function") {
-                  out = node.rule.output(node.resolvedPrimaryInput);
-                } else {
-                  out = node.resolvedPrimaryInput;
-                }
-
-                outputNode = nodeForFile(nodes, out);
-                if(!outputNode) {
-                  outputNode = { id: id++, file: out, inputs: [], outputs: [], lazy: new LazyFile(out) };
-                  nodes.push(outputNode);
-                  newWorklist.unshift(outputNode);
-                }
-                node.output = outputNode;
-                outputNode.inputs.push(node);
-                newWorklist.push(node);
-                change = true;
-              }
-            }
-          }
-        }
-
-        worklist = newWorklist;
-        newWorklist = [];
-        
-        setImmediate(itr.bind(this, change));
-      })(true);
-    });
-  }
-
-
-  work().then(function() {
-    process.stdout.write("digraph{");
-    nodes.forEach(function(node) {
-      if(node.file) {
-        process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
-      } else {
-        var name = node.rule.fn.name;
-
-        if(name === "")
-          name = "?";
-
-        process.stdout.write(node.id + " [label=\"" + name + "\"];");
-      }
-    });
-
-    nodes.forEach(function(node) {
-      if(node.output)
-        process.stdout.write(node.id + "->" + node.output.id + ";");
-      else if(node.outputs)
-        node.outputs.forEach(function(output) {
-          process.stdout.write(node.id + "->" + output.id + ";");
-        });
-    });
-    process.stdout.write("}");
-  });
+  work(nodes, stages).then(printGraph);
 };
 
-function nodeForFile(nodes, file) {
-  for(var i = 0; i < nodes.length; i++) {
-    if(nodes[i].file === file) return nodes[i];
-  }
+function printGraph(nodes) {
+  process.stdout.write("digraph{");
+  nodes.array().forEach(function(node) {
+    if(node.file) {
+      process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
+    } else {
+      var name = node.rule.fn.name;
 
-  return undefined;
+      if(name === "")
+        name = "?";
+
+      process.stdout.write(node.id + " [label=\"" + name + "\"];");
+    }
+  });
+
+  nodes.array().forEach(function(node) {
+    if(node.output)
+      process.stdout.write(node.id + "->" + node.output.id + ";");
+    else if(node.outputs)
+      node.outputs.forEach(function(output) {
+        process.stdout.write(node.id + "->" + output.id + ";");
+      });
+  });
+  process.stdout.write("}");
 }
 
-function call(fn) {
-  return fn();
-}
+//Takes a list of nodes and a set of rules and returns a list of nodes when it reaches a fixed point
+function work(nodes, stages) {
+  nodes = nodes.clone();
+  return new Promise(function(resolve, reject) {
+    var change = false;
 
-function checkStage(stage, node) {
-  var match = false;
-  
-  if(Array.isArray(stage.input)) {
-    stage.input.forEach(function(input) {
-      if(minimatch(node.file, input))
-        match = true;
+    nodes.array().forEach(function(node) {
+      change = change || processNode(nodes, stages, node);
     });
-  } else if(minimatch(node.file, stage.input)) {
-    match = true;
+
+    resolve(change);
+  }).then(function(change) {
+    if(change) return work(nodes, stages);
+    else return nodes;
+  });
+}
+
+function processNode(nodes, stages, node) {
+  if(node.complete) return false;
+  if(node.file) return checkFile(nodes, stages, node);
+  else return evaluateOperation(nodes, stages, node);
+}
+
+function checkFile(nodes, stages, node) {
+  return any(stages.map(function(stage) {
+    return matchAgainstStage(nodes, node, stage);
+  }));
+}
+
+function evaluateOperation(nodes, stages, node) {
+  if(!node.unresolvedPrimaryInput) {
+    if(!node.rule.stage.multi)
+      node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
+    node.unresolvedPrimaryInput = node.rule.primaryInput();
+    return true;
   }
 
-  if(match) {
-    var newNodes = [];
+  if(node.unresolvedPrimaryInput.isResolved() && !node.isPrimaryInputResolved) {
+    node.resolvedPrimaryInput = node.unresolvedPrimaryInput.inspect().value();
+    node.isPrimaryInputResolved = true;
 
+    var out;
+    if(node.resolvedPrimaryInput) out = nodeForFile(nodes, node.rule.output(node.resolvedPrimaryInput));
+    else out = nodeForFile(nodes, node.rule.output());
+
+    node.outputs.push(out);
+    out.inputs.push(node);
+
+    return true;
+  }
+
+  return false;
+}
+
+fez.none = function() {
+  return function() {
+    return Promise.resolve();
+  };
+};
+
+function matchAgainstStage(nodes, node, stage) {
+  assert(node.file);
+  if(isStageInOutputs(node.outputs, stage)) return false;
+  var anyMatch = any(stage.inputs.map(minimatch.bind(this, node.file)));
+
+  if(anyMatch) {
+    var change = false;
     stage.rules.forEach(function(rule) {
-      for(var i = 0; i < node.outputs.length; i++)
-        if(node.outputs[i].rule === rule) return;
-
-      var operation;
-      if(stage.multi && rule.operation) {
-        operation = rule.operation;
-      } else {
-        operation = { id: id++, stageInputs: [node], resolvedSecondaryInputs: [], rule: rule, stage: stage };
-        newNodes.push(operation);
-        if(stage.multi) rule.operation = operation;
-      }
-
+      var operation = getOperationForRule(rule);
       node.outputs.push(operation);
+      operation.stageInputs.push(node);
+      if(nodes.insert(operation)) change = true;
     });
 
-    return { change: newNodes.length, new: newNodes };
+    return change;
+  }
+
+  return false;
+}
+
+function getOperationForRule(rule) {
+  if(rule.stage.multi) {
+    if(!rule.operation)
+      rule.operation = { id: id++, stageInputs: [], resolvedSecondaryInputs: [], outputs: [], rule: rule };
+    return rule.operation;
   } else {
-    return { change: false, new: [] };
+    return { id: id++, stageInputs: [], resolvedSecondaryInputs: [], outputs: [], rule: rule };
   }
 }
 
-function allComplete(nodes) {
-  for(var i = 0; i < nodes.length; i++)
-    if(!nodes[i].complete) return false;
+function isStageInOutputs(outputs, stage) {
+  for(var i = 0; i < outputs.length; i++)
+    if(outputs[i].rule.stage === stage) return true;
+  return false;
+}
+
+function any(arr) {
+  for(var i = 0; i < arr.length; i++)
+    if(arr[i]) return true;
+  return false;
+}
+
+function every(arr) {
+  console.log(arr);
+  for(var i = 0; i < arr.length; i++)
+    if(!arr[i]) return false;
   return true;
+}
+
+function nodeForFile(nodes, file) {
+  for(var i = 0; i < nodes.array().length; i++) 
+    if(nodes.array()[i].file === file) return nodes.array()[i];
+
+  var node = { id: id++, file: file, inputs: [], outputs: [], lazy: new LazyFile(file) };
+  nodes.insert(node);
+  return node;
+}
+
+function callfn(fn) {
+  if(typeof fn === "function")
+    return fn();
+  return fn;
 }
 
 function MagicFile() {
