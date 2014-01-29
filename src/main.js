@@ -77,15 +77,17 @@ function processTarget(target) {
 
   var nodes = new Set();
 
+  loadInitialNodes({ nodes: nodes, stages: stages });
+
+  /*
   setTimeout(function() {
     printGraph(nodes);
   }, 10);
-
-  loadInitialNodes(nodes, stages);
+  */
 };
 
-function loadInitialNodes(nodes, stages) {
-  stages.forEach(function(stage) {
+function loadInitialNodes(context) {
+  context.stages.forEach(function(stage) {
     var inputs;
     if(Array.isArray(stage.input)) {
       inputs = [];
@@ -99,29 +101,9 @@ function loadInitialNodes(nodes, stages) {
     }
 
     inputs.forEach(function(filename) {
-      processNode(nodes, stages, nodeForFile(nodes, filename));
+      processNode(context, nodeForFile(context, filename));
     });
   });
-}
-
-function printNodes(nodes) {
-  return;
-  nodes.array().forEach(function(node) {
-    if(node.file) {
-      process.stdout.write(node.file + " ");
-    } else {
-      var name = node.rule.fn.name;
-
-      if(name === "")
-        name = "?";
-
-      if(node.complete) name += " ✓";
-
-      process.stdout.write(name + " ");
-    }
-  });
-
-  process.stdout.write("\n");
 }
 
 function printGraph(nodes) {
@@ -149,61 +131,64 @@ function printGraph(nodes) {
         process.stdout.write(node.id + "->" + output.id + ";");
       });
   });
+
   process.stdout.write("}");
 }
 
-function processNode(nodes, stages, node) {
-  nodes.insert(node);
-  if(node.file) checkFile(nodes, stages, node);
-  else evaluateOperation(nodes, stages, node);
-  console.log(nodes.array().filter(function(i) { return !i.file; }).map(function(i) { return [i.stageInputs[0].file, i.promise.isResolved()]; }));
+function processNode(context, node) {
+  context.nodes.insert(node);
+  if(node.file) {
+    checkFile(context, node);
+  } else {
+    var promise = evaluateOperation(context, node);
+  }
+
 }
 
-function checkFile(nodes, stages, node) {
-  return stages.map(function(stage) {
-    return matchAgainstStage(nodes, stages, node, stage);
+function checkFile(context, node) {
+  return context.stages.map(function(stage) {
+    return matchAgainstStage(context, node, stage);
   });
 }
 
-function evaluateOperation(nodes, stages, node) {
+function evaluateOperation(context, node) {
   if(!node.rule.stage.multi)
     node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
-  var primaryInputPromise = node.rule.primaryInput().then(function(filename) {
-    var input = nodeForFile(nodes, filename);
+  var primaryInputPromise = node.rule.primaryInput();
+  primaryInputPromise.then(function(filename) {
+    var input = nodeForFile(context, filename);
     input.outputs.push(node);
     node.primaryInput = input;
-
-    processNode(nodes, stages, input);
-
-    return filename;
   });
 
   var outputPromise;
-
   if(typeof node.rule.output === "string") outputPromise = Promise.resolve(node.rule.output);
   outputPromise = node.rule.output(primaryInputPromise);
 
-  outputPromise = outputPromise.then(function(output) {
-    var out = nodeForFile(nodes, output);
+  outputPromise.then(function(output) {
+    var out = nodeForFile(context, output);
     node.outputs.push(out);
     out.inputs.push(node);
-    processNode(nodes, stages, out);
   });
 
-  if(!node.rule.stage.multi)
-    node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
-
-  var secondaryInputPromise = node.rule.secondaryInputs().then(function(resolved) {
+  var secondaryInputPromise = node.rule.secondaryInputs();
+  secondaryInputPromise.then(function(resolved) {
     resolved.forEach(function(file) {
-      var input = nodeForFile(nodes, file);
+      var input = nodeForFile(context, file);
       input.outputs.push(node);
       node.secondaryInputs.push(input);
-      processNode(nodes, stages, input);
     });
   });
 
-  node.promise = Promise.all([primaryInputPromise, outputPromise, secondaryInputPromise]);
+  if(!node.rule.stage.multi)
+    node.rule.stage.magic.setFile(undefined);
+
+  return Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInput, secondaryInputs) {
+    return Promise.all([nodeForFile(context, primaryInput).promise].concat(secondaryInputs.map(function(i) { return nodeForFile(context, i).promise; })));
+  }).then(function() {
+    console.log("READY TO EXECUTE " + node.rule.fn.name);
+  });
 }
 
 function build(nodes) {
@@ -233,20 +218,6 @@ function sumTruthy(arr) {
   }, 0);
 };
 
-function opInComplete(node) {
-  assert(!node.file);
-  return 1;
-};
-
-function opInCount(node) {
-  assert(!node.file);
-  return 1;
-};
-
-function opIsReady(node) {
-  return opInComplete(node) === opInCount(node);
-}
-
 function prop(p) {
   return function(el) {
     return el[p];
@@ -255,7 +226,7 @@ function prop(p) {
 
 var file = prop("file");
 
-function matchAgainstStage(nodes, stages, node, stage) {
+function matchAgainstStage(context, node, stage) {
   assert(node.file);
   if(isStageInOutputs(node.outputs, stage)) return false;
   var anyMatch = any(stage.inputs.map(minimatch.bind(this, node.file)));
@@ -266,7 +237,7 @@ function matchAgainstStage(nodes, stages, node, stage) {
       var operation = getOperationForRule(rule);
       node.outputs.push(operation);
       operation.stageInputs.push(node);
-      processNode(nodes, stages, operation);
+      processNode(context, operation);
     });
 
     return change;
@@ -303,11 +274,12 @@ function every(arr) {
   return true;
 }
 
-function nodeForFile(nodes, file) {
-  for(var i = 0; i < nodes.array().length; i++) 
-    if(nodes.array()[i].file === file) return nodes.array()[i];
+function nodeForFile(context, file) {
+  for(var i = 0; i < context.nodes.array().length; i++) 
+    if(context.nodes.array()[i].file === file) return context.nodes.array()[i];
 
   var node = new FileNode(file);
+  processNode(context, node);
 
   return node;
 }
@@ -318,7 +290,14 @@ function FileNode(file) {
   this.inputs = [];
   this.outputs = [];
   this.lazy = new LazyFile(file);
+  this._deferred = Promise.defer();
+  this.promise = this._deferred.promise;
 }
+
+FileNode.prototype.complete = function() {
+  this._deferred.resolve();
+  this.lazy._loadFile();
+};
 
 function callfn(fn) {
   if(typeof fn === "function")
