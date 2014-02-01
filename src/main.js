@@ -35,7 +35,12 @@ function processTarget(target) {
   var spec = {};
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
-    if(arguments.length === 3) {
+    if(arguments.length === 3 && Array.isArray(primaryInput)) {
+      fn = output;
+      output = secondaryInputs;
+      primaryInput = function() { return Promise.resolve(undefined); };
+      secondaryInputs = primaryInput;
+    } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
       secondaryInputs = function() { return Promise.resolve([]); };
@@ -55,8 +60,8 @@ function processTarget(target) {
   spec.with = function(glob) {
     return {
       each: function(fn) {
-        var magic = new MagicFile();
-        stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
+        var magic = new MagicFile(),
+            stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
 
         stages.push(stage);
         fn(magic);
@@ -75,15 +80,54 @@ function processTarget(target) {
 
   target(spec);
 
-  var nodes = new Set();
+  var context = { nodes: new Set(), stages: stages,  promises: new PromiseWatcher() }; 
 
-  loadInitialNodes({ nodes: nodes, stages: stages });
+  function itr(promise) {
+    promise.then(function() {
+      var allDone = true;
+      context.nodes.array().forEach(function(node) {
+        if(node.file && !node.isComplete()) {
+          allDone = false;
+        }
+      });
 
-  /*
-  setTimeout(function() {
-    printGraph(nodes);
-  }, 10);
-  */
+      if(allDone) {
+      } else {
+        context.promises = new PromiseWatcher();
+        context.nodes.array().forEach(function(node) {
+          if(node.file && !node.isComplete()  && node.inputs.length === 0)
+            node.complete();
+        });
+        itr(context.promises.promise);
+      }
+    });
+  }
+
+  itr(context.promises.promise);
+                 
+
+  loadInitialNodes(context);
+};
+
+function PromiseWatcher() {
+  this._promises = [];
+  this._done = 0;
+  this._deferred = Promise.defer();
+  this.promise = this._deferred.promise;
+  setImmediate(function() {
+    if(this._promises.length === 0)
+      this._deferred.resolve();
+  }.bind(this));
+}
+
+PromiseWatcher.prototype.add = function(promise) {
+  this._promises.push(promise);
+  promise.then(function() {
+    this._done += 1;
+    if(this._done === this._promises.length) {
+      this._deferred.resolve();
+    }
+  }.bind(this));
 };
 
 function loadInitialNodes(context) {
@@ -116,8 +160,6 @@ function printGraph(nodes) {
 
       if(name === "")
         name = "?";
-
-      if(node.promise.isResolved()) name += " ✓";
 
       process.stdout.write(node.id + " [label=\"" + name + "\"];");
     }
@@ -152,19 +194,30 @@ function checkFile(context, node) {
 }
 
 function evaluateOperation(context, node) {
-  if(!node.rule.stage.multi)
+  if(node.rule.stage.multi)
+    node.rule.stage.magic._lazies = node.lazies;
+  else
     node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
-  var primaryInputPromise = node.rule.primaryInput();
+
+  var primaryInputPromise;
+  if(node.rule.primaryInput instanceof MagicFileList) primaryInputPromise = Promise.resolve(undefined);
+  else if(node.rule.primaryInput instanceof MagicFile) primaryInputPromise = node.rule.primaryInput.name()();
+  else primaryInputPromise = node.rule.primaryInput();
+
   primaryInputPromise.then(function(filename) {
-    var input = nodeForFile(context, filename);
-    input.outputs.push(node);
-    node.primaryInput = input;
+    if(filename) {
+      var input = nodeForFile(context, filename);
+      input.outputs.push(node);
+      node.primaryInput = input;
+    }
   });
 
   var outputPromise;
   if(typeof node.rule.output === "string") outputPromise = Promise.resolve(node.rule.output);
   outputPromise = node.rule.output(primaryInputPromise);
+
+  context.promises.add(outputPromise);
 
   outputPromise.then(function(output) {
     var out = nodeForFile(context, output);
@@ -172,8 +225,12 @@ function evaluateOperation(context, node) {
     out.inputs.push(node);
   });
 
-  var secondaryInputPromise = node.rule.secondaryInputs();
+  var secondaryInputPromise;
+  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputPromise = node.rule.primaryInput.names()();
+  else secondaryInputPromise = node.rule.secondaryInputs();
+
   secondaryInputPromise.then(function(resolved) {
+    node.secondaryInputs = [];
     resolved.forEach(function(file) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
@@ -183,11 +240,15 @@ function evaluateOperation(context, node) {
 
   if(!node.rule.stage.multi)
     node.rule.stage.magic.setFile(undefined);
+  else
+    node.rule.stage.magic._lazies = undefined;
 
-  return Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInput, secondaryInputs) {
+  Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInput, secondaryInputs) {
     return Promise.all([nodeForFile(context, primaryInput).promise].concat(secondaryInputs.map(function(i) { return nodeForFile(context, i).promise; })));
   }).then(function() {
-    console.log("READY TO EXECUTE " + node.rule.fn.name);
+    node.outputs.forEach(function(out) {
+      out.complete();
+    });
   });
 }
 
@@ -249,7 +310,7 @@ function matchAgainstStage(context, node, stage) {
 function getOperationForRule(rule) {
   if(rule.stage.multi) {
     if(!rule.operation)
-      rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule };
+      rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule, lazies: new LazyFileList() };
     return rule.operation;
   } else {
     return { id: id++, stageInputs: [], outputs: [], rule: rule };
@@ -295,8 +356,14 @@ function FileNode(file) {
 }
 
 FileNode.prototype.complete = function() {
+  console.log("completing " + this.file);
   this._deferred.resolve();
   this.lazy._loadFile();
+  this._complete = true;
+};
+
+FileNode.prototype.isComplete = function() {
+  return !!this._complete;
 };
 
 function callfn(fn) {
@@ -323,18 +390,22 @@ MagicFile.prototype.inspect = function() {
 };
 
 function MagicFileList() {
-  this._lazies = [];
 };
 
-MagicFileList.prototype.pushFile = function(file) {
-  this._lazies.push(file);
-};
-
-MagicFileList.prototype.array = function() {
+MagicFileList.prototype.names = function() {
   return function() {
-    return new Promise(function(resolve, reject) {
-    });
-  };
+    return this._lazies.getFilenames();
+  }.bind(this);
+};
+
+function LazyFileList() {
+  
+};
+
+LazyFileList.prototype.getFilenames = function() {
+  return function() {
+    return this._files.map(function(i) { i.getFilename(); });
+  }.bind(this);
 };
 
 function LazyFile(filename) {
@@ -356,8 +427,8 @@ LazyFile.prototype._loadFile = function(filename) {
     fs.readFile(filename, function(err, data) {
       if(err) this._asBuffer.reject(err);
       else this._asBuffer.resolve(data);
-    });
-  });
+    }.bind(this));
+  }.bind(this));
 };
 
 LazyFile.prototype.getFilename = function() {
