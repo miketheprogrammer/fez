@@ -7,7 +7,6 @@ var util = require("util"),
     glob = require("glob"),
     path = require("path"),
     minimatch = require("minimatch"),
-    Promise = require("bluebird"),
     isPromise = require("is-promise"),
     fs = require("fs"),
     mkdirp = require("mkdirp"),
@@ -18,6 +17,7 @@ var util = require("util"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
     Set = require("./set.js"),
+    Do = require("./do.js"),
     fezUtil = require("./util.js");
 
 function fez(module) {
@@ -30,26 +30,26 @@ var id = 0;
 
 function processTarget(target) {
   var stages = [],
-      currentStage = null;
-
-  var spec = {};
+      currentStage = null,
+      spec = {},
+      context = { nodes: new Set(), stages: stages, do: new Do() }; 
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
     if(arguments.length === 3 && Array.isArray(primaryInput)) {
       fn = output;
       output = secondaryInputs;
-      primaryInput = function() { return Promise.resolve(undefined); };
+      primaryInput = function() { return context.do.value(undefined); };
       secondaryInputs = primaryInput;
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
-      secondaryInputs = function() { return Promise.resolve([]); };
+      secondaryInputs = function() { return context.do.value([]); };
     }
 
     if(typeof output === "string") {
       var out = output;
       output = function() {
-        return Promise.resolve(out);
+        return context.do.value(out);
       };
     }
 
@@ -80,54 +80,16 @@ function processTarget(target) {
 
   target(spec);
 
-  var context = { nodes: new Set(), stages: stages,  promises: new PromiseWatcher() }; 
-
-  function itr(promise) {
-    promise.then(function() {
-      var allDone = true;
-      context.nodes.array().forEach(function(node) {
-        if(node.file && !node.isComplete()) {
-          allDone = false;
-        }
-      });
-
-      if(allDone) {
-      } else {
-        context.promises = new PromiseWatcher();
-        context.nodes.array().forEach(function(node) {
-          if(node.file && !node.isComplete()  && node.inputs.length === 0)
-            node.complete();
-        });
-        itr(context.promises.promise);
+  loadInitialNodes(context);
+  context.do.on("fixed", function() {
+    printGraph(context.nodes);
+    context.nodes.array().forEach(function(node) {
+      if(node.file && node.inputs.length === 0) {
+        console.log("marking", node.file, "as original");
+        node.do._checkDo();
       }
     });
-  }
-
-  itr(context.promises.promise);
-                 
-
-  loadInitialNodes(context);
-};
-
-function PromiseWatcher() {
-  this._promises = [];
-  this._done = 0;
-  this._deferred = Promise.defer();
-  this.promise = this._deferred.promise;
-  setImmediate(function() {
-    if(this._promises.length === 0)
-      this._deferred.resolve();
-  }.bind(this));
-}
-
-PromiseWatcher.prototype.add = function(promise) {
-  this._promises.push(promise);
-  promise.then(function() {
-    this._done += 1;
-    if(this._done === this._promises.length) {
-      this._deferred.resolve();
-    }
-  }.bind(this));
+  });
 };
 
 function loadInitialNodes(context) {
@@ -174,7 +136,7 @@ function printGraph(nodes) {
       });
   });
 
-  process.stdout.write("}");
+  process.stdout.write("}\n");
 }
 
 function processNode(context, node) {
@@ -194,42 +156,46 @@ function checkFile(context, node) {
 }
 
 function evaluateOperation(context, node) {
-  if(node.rule.stage.multi)
-    node.rule.stage.magic._lazies = node.lazies;
-  else
-    node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
+  if(node.rule.stage.multi) node.rule.stage.magic._lazies = node.lazies;
+  else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
+  node.do = context.do.createNode(function() {
+    console.log(primaryInputDo._value, secondaryInputDo._value, outputDo._value);
+  });
 
-  var primaryInputPromise;
-  if(node.rule.primaryInput instanceof MagicFileList) primaryInputPromise = Promise.resolve(undefined);
-  else if(node.rule.primaryInput instanceof MagicFile) primaryInputPromise = node.rule.primaryInput.name()();
-  else primaryInputPromise = node.rule.primaryInput();
+  var primaryInputDo;
+  if(node.rule.primaryInput instanceof MagicFileList) primaryInputDo = context.do.value(undefined);
+  else if(node.rule.primaryInput instanceof MagicFile) primaryInputDo = node.rule.primaryInput.name()();
+  else primaryInputDo = node.rule.primaryInput();
 
-  primaryInputPromise.then(function(filename) {
+  primaryInputDo.then(function(filename) {
     if(filename) {
       var input = nodeForFile(context, filename);
       input.outputs.push(node);
       node.primaryInput = input;
+      node.do.connectFrom(input.do);
     }
+
+    return filename;
   });
 
-  var outputPromise;
-  if(typeof node.rule.output === "string") outputPromise = Promise.resolve(node.rule.output);
-  outputPromise = node.rule.output(primaryInputPromise);
+  var outputDo;
+  if(typeof node.rule.output === "string") outputDo = context.do.value(node.rule.output);
+  else outputDo = node.rule.output(primaryInputDo);
 
-  context.promises.add(outputPromise);
-
-  outputPromise.then(function(output) {
+  outputDo = outputDo.then(function(output) {
     var out = nodeForFile(context, output);
     node.outputs.push(out);
     out.inputs.push(node);
+    out.do.connectFrom(node.do);
+    return output;
   });
 
-  var secondaryInputPromise;
-  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputPromise = node.rule.primaryInput.names()();
-  else secondaryInputPromise = node.rule.secondaryInputs();
+  var secondaryInputDo;
+  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputDo = node.rule.primaryInput.names()();
+  else secondaryInputDo = node.rule.secondaryInputs();
 
-  secondaryInputPromise.then(function(resolved) {
+  secondaryInputDo = secondaryInputDo.then(function(resolved) {
     node.secondaryInputs = [];
     resolved.forEach(function(file) {
       var input = nodeForFile(context, file);
@@ -238,39 +204,13 @@ function evaluateOperation(context, node) {
     });
   });
 
-  if(!node.rule.stage.multi)
-    node.rule.stage.magic.setFile(undefined);
-  else
-    node.rule.stage.magic._lazies = undefined;
+  if(!node.rule.stage.multi) node.rule.stage.magic.setFile(undefined);
+  else node.rule.stage.magic._lazies = undefined;
 
-  Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInput, secondaryInputs) {
-    return Promise.all([nodeForFile(context, primaryInput).promise].concat(secondaryInputs.map(function(i) { return nodeForFile(context, i).promise; })));
-  }).then(function() {
-    node.outputs.forEach(function(out) {
-      out.complete();
-    });
-  });
+  node.do.connectFrom(primaryInputDo);
+  node.do.connectFrom(secondaryInputDo);
+  node.do.connectFrom(outputDo);
 }
-
-function build(nodes) {
-  var working = [];
-
-  nodes.array().forEach(function(node) {
-    if(node.file && node.inputs.length === 0) working.push(node);
-  });
-
-  return digest(nodes, working).then(done);
-}
-
-function digest(nodes, working) {
-  return new Promise(function(resolve, reject) {
-
-  });
-};
-
-function done() {
-  console.log("Done.");
-};
 
 function sumTruthy(arr) {
   return arr.reduce(function(prev, cur) {
@@ -295,7 +235,7 @@ function matchAgainstStage(context, node, stage) {
   if(anyMatch) {
     var change = false;
     stage.rules.forEach(function(rule) {
-      var operation = getOperationForRule(rule);
+      var operation = getOperationForRule(context, rule);
       node.outputs.push(operation);
       operation.stageInputs.push(node);
       processNode(context, operation);
@@ -307,10 +247,10 @@ function matchAgainstStage(context, node, stage) {
   return false;
 }
 
-function getOperationForRule(rule) {
+function getOperationForRule(context, rule) {
   if(rule.stage.multi) {
     if(!rule.operation)
-      rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule, lazies: new LazyFileList() };
+      rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule, lazies: new LazyFileList(context) };
     return rule.operation;
   } else {
     return { id: id++, stageInputs: [], outputs: [], rule: rule };
@@ -339,20 +279,19 @@ function nodeForFile(context, file) {
   for(var i = 0; i < context.nodes.array().length; i++) 
     if(context.nodes.array()[i].file === file) return context.nodes.array()[i];
 
-  var node = new FileNode(file);
+  var node = new FileNode(context, file);
   processNode(context, node);
 
   return node;
 }
 
-function FileNode(file) {
+function FileNode(context, file) {
   this.id = id++;
   this.file = file;
   this.inputs = [];
   this.outputs = [];
-  this.lazy = new LazyFile(file);
-  this._deferred = Promise.defer();
-  this.promise = this._deferred.promise;
+  this.lazy = new LazyFile(context, file);
+  this.do = context.do.defer(file);
 }
 
 FileNode.prototype.complete = function() {
@@ -398,24 +337,24 @@ MagicFileList.prototype.names = function() {
   }.bind(this);
 };
 
-function LazyFileList() {
-  
+function LazyFileList(context) {
+  this._filenames = context.do.defer();
 };
 
 LazyFileList.prototype.getFilenames = function() {
-  return function() {
-    return this._files.map(function(i) { i.getFilename(); });
-  }.bind(this);
+  return this._filenames;
+  //return this._files.map(function(i) { i.getFilename(); });
 };
 
-function LazyFile(filename) {
-  this._filename = Promise.defer();
-  this._asBuffer = Promise.defer();
+function LazyFile(context, filename) {
+  this._filename = context.do.defer();
+  this._asBuffer = context.do.defer();
 
-  if(filename) this._filename.resolve(filename);
+  if(filename) this._filename.done(filename);
 };
 
 LazyFile.prototype._setFilename = function(filename) {
+  console.log("filename");
   this._filename.resolve(filename);
 };
 
@@ -432,11 +371,11 @@ LazyFile.prototype._loadFile = function(filename) {
 };
 
 LazyFile.prototype.getFilename = function() {
-  return this._filename.promise;
+  return this._filename;
 };
 
 LazyFile.prototype.asBuffer = function() {
-  return this._asBuffer.promise;
+  return this._asBuffer;
 };
 
 function toArray(obj) {
@@ -610,7 +549,7 @@ fez.mapFile = function(pattern) {
         }
       })();
 
-      return pattern.replace("%f", f).replace("%F", path.basename(filename)).replace("%d", path.dirname(filename)).replace("%e", path.extname(filename)).replace("./", "");
+      this.done(pattern.replace("%f", f).replace("%F", path.basename(filename)).replace("%d", path.dirname(filename)).replace("%e", path.extname(filename)).replace("./", ""));
     });
   };
 };
