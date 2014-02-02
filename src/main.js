@@ -81,12 +81,13 @@ function processTarget(target) {
   target(spec);
 
   loadInitialNodes(context);
+
   context.do.on("fixed", function() {
     printGraph(context.nodes);
     context.nodes.array().forEach(function(node) {
       if(node.file && node.inputs.length === 0) {
-        console.log("marking", node.file, "as original");
-        node.do._checkDo();
+        //console.log("marking " + node.file + " as done");
+        node.do.unpause();
       }
     });
   });
@@ -159,7 +160,7 @@ function evaluateOperation(context, node) {
   if(node.rule.stage.multi) node.rule.stage.magic._lazies = node.lazies;
   else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
-  node.do = context.do.createNode(function() {
+  node.do = context.do.createNode(function nodeDo() {
     console.log(primaryInputDo._value, secondaryInputDo._value, outputDo._value);
   });
 
@@ -168,39 +169,39 @@ function evaluateOperation(context, node) {
   else if(node.rule.primaryInput instanceof MagicFile) primaryInputDo = node.rule.primaryInput.name()();
   else primaryInputDo = node.rule.primaryInput();
 
-  primaryInputDo.then(function(filename) {
+  primaryInputDo.then(function primaryInput(filename){ 
     if(filename) {
       var input = nodeForFile(context, filename);
       input.outputs.push(node);
       node.primaryInput = input;
       node.do.connectFrom(input.do);
+      processNode(context, input);
     }
-
-    return filename;
   });
 
   var outputDo;
   if(typeof node.rule.output === "string") outputDo = context.do.value(node.rule.output);
   else outputDo = node.rule.output(primaryInputDo);
 
-  outputDo = outputDo.then(function(output) {
+  outputDo.then(function outputFn (output) {
     var out = nodeForFile(context, output);
     node.outputs.push(out);
     out.inputs.push(node);
     out.do.connectFrom(node.do);
-    return output;
+    processNode(context, out);
   });
 
   var secondaryInputDo;
   if(node.rule.primaryInput instanceof MagicFileList) secondaryInputDo = node.rule.primaryInput.names()();
   else secondaryInputDo = node.rule.secondaryInputs();
 
-  secondaryInputDo = secondaryInputDo.then(function(resolved) {
+  secondaryInputDo.then(function secondaryInput(resolved) {
     node.secondaryInputs = [];
     resolved.forEach(function(file) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
       node.secondaryInputs.push(input);
+      processNode(context, input);
     });
   });
 
@@ -280,7 +281,6 @@ function nodeForFile(context, file) {
     if(context.nodes.array()[i].file === file) return context.nodes.array()[i];
 
   var node = new FileNode(context, file);
-  processNode(context, node);
 
   return node;
 }
@@ -530,7 +530,7 @@ fez.exec = function(command) {
 
 fez.mapFile = function(pattern) {
   return function(input) {
-    return input.then(function(filename) {
+    return input.then(function mapFile(filename) {
       var f = (function() {
         var basename = path.basename(filename);
         var hidden = false;
