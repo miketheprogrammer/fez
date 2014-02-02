@@ -82,17 +82,16 @@ function processTarget(target) {
   loadInitialNodes(context);
 
   context.do.on("fixed", function() {
-    printGraph(context.nodes);
     var any = false;
     context.nodes.array().forEach(function(node) {
       if(node.file && node.inputs.length === 0 && !node.do._done) {
-        console.log("marking " + node.file + " as done");
         node.do.unpause();
         any = true;
       }
     });
 
-    if(any) context.do.unspool();
+    if(any) context.do.unspool(); else printGraph(context.nodes);
+
   });
 
   context.do.unspool();
@@ -172,7 +171,11 @@ function evaluateOperation(context, node) {
   else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
   node.do = context.do.createNode(function nodeDo() {
-    console.log(primaryInputDo._value, secondaryInputDo._value, outputDo._value);
+    //console.log(primaryInputDo._value, secondaryInputDo._value, outputDo._value);
+    this.work();
+    setTimeout(function() {
+      this.done();
+    }.bind(this), 500);
   });
 
   var primaryInputDo;

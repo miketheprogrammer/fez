@@ -39,9 +39,7 @@ Do.prototype.all = function(nodes, fn) {
 };
 
 Do.prototype.defer = function(str) {
-  var node = this.createNode(function() {
-    console.log("do", str);
-  });
+  var node = this.createNode(function() {});
 
   node.pause();
 
@@ -54,6 +52,7 @@ Do.prototype._addWorking = function() {
 
 Do.prototype._doneWorking = function() {
   this._workingCount -= 1;
+  this.unspool();
 };
 
 Do.prototype.value = function(val) {
