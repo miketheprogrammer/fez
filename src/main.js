@@ -53,7 +53,6 @@ function processTarget(target) {
       };
     }
 
-    //console.log(primaryInput, secondaryInputs, output, fn, currentStage);
     currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
   };
 
@@ -84,13 +83,19 @@ function processTarget(target) {
 
   context.do.on("fixed", function() {
     printGraph(context.nodes);
+    var any = false;
     context.nodes.array().forEach(function(node) {
-      if(node.file && node.inputs.length === 0) {
-        //console.log("marking " + node.file + " as done");
+      if(node.file && node.inputs.length === 0 && !node.do._done) {
+        console.log("marking " + node.file + " as done");
         node.do.unpause();
+        any = true;
       }
     });
+
+    if(any) context.do.unspool();
   });
+
+  context.do.unspool();
 };
 
 function loadInitialNodes(context) {
@@ -117,12 +122,18 @@ function printGraph(nodes) {
   process.stdout.write("digraph{");
   nodes.array().forEach(function(node) {
     if(node.file) {
-      process.stdout.write(node.id + " [shape=box,label=\"" + node.file + "\"];");
+      var name = node.file;
+      if(node.do._done)
+        name += "+";
+      process.stdout.write(node.id + " [shape=box,label=\"" + name + "\"];");
     } else {
-      var name = node.rule.fn.name;
+      name = node.rule.fn.name;
 
       if(name === "")
         name = "?";
+
+      if(node.do._done)
+        name += "+";
 
       process.stdout.write(node.id + " [label=\"" + name + "\"];");
     }
@@ -188,6 +199,7 @@ function evaluateOperation(context, node) {
     node.outputs.push(out);
     out.inputs.push(node);
     out.do.connectFrom(node.do);
+    out.do.unpause();
     processNode(context, out);
   });
 

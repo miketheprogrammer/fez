@@ -8,19 +8,21 @@ function Do() {
   this._paused = false;
   this._queue = [];
 
-  (function unspool() {
-    setImmediate(function() {
-      var queue = this._queue.slice(); this._queue = [];
-      while(queue.length > 0) queue.pop()();
-      if(this._queue.length > 0) unspool.call(this);
-      else {
-        if(this._workingCount === 0) this.emit("fixed");
-      }
-    }.bind(this));
-  }).call(this);
 };
 
 Do.prototype = new EventEmitter();
+
+Do.prototype.unspool = function() {
+  setImmediate(function() {
+    if(this._queue.length > 0) {
+      var queue = this._queue; this._queue = [];
+      while(queue.length > 0) queue.pop()();
+      this.unspool();
+    } else if(this._workingCount === 0) {
+      this.emit("fixed");
+    }
+  }.bind(this));
+};
 
 Do.prototype.queue = function(fn) {
   this._queue.push(fn);
@@ -89,7 +91,7 @@ Node.prototype.pause = function() {
 };
 
 Node.prototype.unpause = function() {
-  if(!this._pause) {
+  if(this._paused) {
     this._paused = false;
     this._checkDo();
   }
@@ -143,13 +145,8 @@ function values(nodes) {
 Node.prototype._checkDo = function() {
   if(this._done) throw new Error("Already done");
   this._graph.queue(function() {
-    if(this._done) {
-      throw new Error("Uh oh");
-    }
-    assert(!this._done);
-    if(!this._paused && this._from.reduce(done, true)) {
-      this.do();
-    }
+    if(this._done) throw new Error("Uh oh");
+    if(!this._paused && this._from.reduce(done, true)) this.do();
   }.bind(this));
 };
 
