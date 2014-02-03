@@ -38,8 +38,8 @@ function processTarget(target) {
     if(arguments.length === 3 && Array.isArray(primaryInput)) {
       fn = output;
       output = secondaryInputs;
-      primaryInput = function() { return context.do.value(undefined); };
       secondaryInputs = primaryInput;
+      primaryInput = function() { return context.do.value(undefined); };
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
@@ -90,8 +90,19 @@ function processTarget(target) {
       }
     });
 
-    if(any) context.do.unspool(); else printGraph(context.nodes);
+    if(any) {
+      context.do.unspool(); 
+    } else  {
+      context.nodes.array().forEach(function(node) {
+        if(node.lazies && !node.do._done) {
+          node.lazies._setFilenames(node.stageInputs.map(function(i) { return i.file; }));
+          any = true;
+        }
+      });
 
+      if(any) context.do.unspool();
+      else console.log("Done");
+    }
   });
 
   context.do.unspool();
@@ -171,11 +182,11 @@ function evaluateOperation(context, node) {
   else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
   node.do = context.do.createNode(function nodeDo() {
-    //console.log(primaryInputDo._value, secondaryInputDo._value, outputDo._value);
     this.work();
     setTimeout(function() {
+      console.log((primaryInputDo._value ? primaryInputDo._value : "") + secondaryInputDo._value.join(" ") + " -> " + outputDo._value);
       this.done();
-    }.bind(this), 500);
+    }.bind(this), 200);
   });
 
   var primaryInputDo;
@@ -184,7 +195,7 @@ function evaluateOperation(context, node) {
   else primaryInputDo = node.rule.primaryInput();
 
   primaryInputDo.then(function primaryInput(filename){ 
-    if(filename) {
+    if(filename && !Array.isArray(filename)) {
       var input = nodeForFile(context, filename);
       input.outputs.push(node);
       node.primaryInput = input;
@@ -216,6 +227,7 @@ function evaluateOperation(context, node) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
       node.secondaryInputs.push(input);
+      node.do.connectFrom(input.do);
       processNode(context, input);
     });
   });
@@ -310,7 +322,6 @@ function FileNode(context, file) {
 }
 
 FileNode.prototype.complete = function() {
-  console.log("completing " + this.file);
   this._deferred.resolve();
   this.lazy._loadFile();
   this._complete = true;
@@ -358,7 +369,10 @@ function LazyFileList(context) {
 
 LazyFileList.prototype.getFilenames = function() {
   return this._filenames;
-  //return this._files.map(function(i) { i.getFilename(); });
+};
+
+LazyFileList.prototype._setFilenames = function(filenames) {
+  this._filenames.done(filenames);
 };
 
 function LazyFile(context, filename) {
@@ -369,7 +383,6 @@ function LazyFile(context, filename) {
 };
 
 LazyFile.prototype._setFilename = function(filename) {
-  console.log("filename");
   this._filename.resolve(filename);
 };
 
@@ -564,7 +577,7 @@ fez.mapFile = function(pattern) {
         }
       })();
 
-      this.done(pattern.replace("%f", f).replace("%F", path.basename(filename)).replace("%d", path.dirname(filename)).replace("%e", path.extname(filename)).replace("./", ""));
+      return pattern.replace("%f", f).replace("%F", path.basename(filename)).replace("%d", path.dirname(filename)).replace("%e", path.extname(filename)).replace("./", "");
     });
   };
 };

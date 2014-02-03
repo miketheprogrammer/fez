@@ -13,12 +13,13 @@ function Do() {
 Do.prototype = new EventEmitter();
 
 Do.prototype.unspool = function() {
+  if(this.working()) return;
   setImmediate(function() {
     if(this._queue.length > 0) {
       var queue = this._queue; this._queue = [];
-      while(queue.length > 0) queue.pop()();
+      while(queue.length > 0) queue.shift()();
       this.unspool();
-    } else if(this._workingCount === 0) {
+    } else {
       this.emit("fixed");
     }
   }.bind(this));
@@ -26,6 +27,10 @@ Do.prototype.unspool = function() {
 
 Do.prototype.queue = function(fn) {
   this._queue.push(fn);
+};
+
+Do.prototype.working = function() {
+  return this._workingCount > 0;
 };
 
 Do.prototype.createNode = function(fn, parent) {
@@ -67,6 +72,7 @@ function Node(graph, fn, parent) {
   this._graph = graph;
   this._to = [];
   this._done = false;
+  this._queued = false;
   this._value = undefined;
   this._working = false;
   if(Array.isArray(parent)) this._from = parent;
@@ -79,10 +85,7 @@ Node.prototype.connectFrom = function(node) {
   assert(!this._done);
   node._to.push(this);
   this._from.push(node);
-  if(node._done)
-    this._graph.queue(function() {
-      this._checkDo();
-    }.bind(this));
+  if(node._done) this._checkDo();
 };
 
 Node.prototype.pause = function() {
@@ -123,6 +126,7 @@ Node.prototype.work = function() {
 Node.prototype.done = function(value) {
   assert(!this._done);
   this._done = true;
+  this._paused = false;
   if(this._working) this._graph._doneWorking();
   this._working = false;
   this._value = value;
@@ -142,17 +146,26 @@ function values(nodes) {
 }
 
 Node.prototype._checkDo = function() {
+  if(this._working || this._queued) return;
   if(this._done) throw new Error("Already done");
+  var stack = new Error().stack;
+  this._queued = true;
   this._graph.queue(function() {
-    if(this._done) throw new Error("Uh oh");
+    this._queued = false;
+    if(this._done) {
+      console.log(stack);
+      throw new Error("Uh oh");
+    }
     if(!this._paused && this._from.reduce(done, true)) this.do();
   }.bind(this));
 };
 
 Node.prototype.do = function() {
-  assert(!this._done);
+  assert(!this._done && !this._working);
   var ret = this._fn.apply(this, values(this._from));
-  if(!this.working()) this.done(ret);
+  if(!this._working) {
+    this.done(ret);
+  }
 };
 
 module.exports = Do;
