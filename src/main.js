@@ -459,25 +459,6 @@ function flatten(arrays) {
   }, []);
 }
 
-function getAllMatchingInputs(rules) {
-  return flatten(rules.map(getMatchingInputs));
-}
-
-function getMatchingInputs(rule) {
-  //(ibw) so bad
-  if(rule.each) {
-    if(typeof rule.inputs[0] === "function") 
-      return rule.inputs[0](glob.sync("**"));
-    return glob.sync(rule.inputs[0]);
-  }
-
-  return flatten(rule.inputs.map(function(input) {
-    if(typeof input === "function") 
-      return input(glob.sync("**"));
-    return glob.sync(input);
-  }));
-}
-
 function toPromise(p) {
   if(isPromise(p)) return p;
   return Promise.resolve(p);
