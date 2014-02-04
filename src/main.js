@@ -13,6 +13,7 @@ var util = require("util"),
     assert = require("assert"),
     Writable = require("stream").Writable,
     exec = require("child_process").exec,
+    Promise = require("bluebird"),
     xtend = require("xtend"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
@@ -25,18 +26,6 @@ function fez(module) {
     processTarget(module.exports.default);
   }
 }
-
-fez.defer = function(fn) {
-  var deferred = new Deferred();
-  if(fn) deferred.unpause(fn);
-  return deferred;
-};
-
-fez.value = function(val) {
-  return fez.defer(function(resolve) {
-    resolve(val);
-  });
-};
 
 var id = 0;
 
@@ -51,17 +40,17 @@ function processTarget(target) {
       fn = output;
       output = secondaryInputs;
       secondaryInputs = primaryInput;
-      primaryInput = function() { return fez.value(undefined); };
+      primaryInput = function() { return Promise.resolve(undefined); };
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
-      secondaryInputs = function() { return fez.value([]); };
+      secondaryInputs = function() { return Promise.resolve([]); };
     }
 
     if(typeof output === "string") {
       var out = output;
       output = function() {
-        return fez.value(out);
+        return Promise.resolve(out);
       };
     }
 
@@ -92,34 +81,6 @@ function processTarget(target) {
   target(spec);
 
   loadInitialNodes(context);
-  
-  /*
-  context.do.on("fixed", function() {
-    var any = false;
-    context.nodes.array().forEach(function(node) {
-      if(node.file && node.inputs.length === 0 && !node.do._done) {
-        node.do.unpause();
-        any = true;
-      }
-    });
-
-    if(any) {
-      context.do.unspool(); 
-    } else  {
-      context.nodes.array().forEach(function(node) {
-        if(node.lazies && !node.do._done) {
-          node.lazies._setFilenames(node.stageInputs.map(function(i) { return i.file; }));
-          any = true;
-        }
-      });
-
-      if(any) context.do.unspool();
-      else console.log("Done");
-    }
-  });
-   */
-
-  context.do.unspool();
 };
 
 function loadInitialNodes(context) {
@@ -147,7 +108,7 @@ function printGraph(nodes) {
   nodes.array().forEach(function(node) {
     if(node.file) {
       var name = node.file;
-      if(node.do._done)
+      if(node.promise.isResolved())
         name += "+";
       process.stdout.write(node.id + " [shape=box,label=\"" + name + "\"];");
     } else {
@@ -156,7 +117,7 @@ function printGraph(nodes) {
       if(name === "")
         name = "?";
 
-      if(node.do._done)
+      if(node.promise.isResolved())
         name += "+";
 
       process.stdout.write(node.id + " [label=\"" + name + "\"];");
@@ -195,63 +156,68 @@ function evaluateOperation(context, node) {
   if(node.rule.stage.multi) node.rule.stage.magic._lazies = node.lazies;
   else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
-  node.do = context.do.createNode(function nodeDo() {
-    this.work();
-    setTimeout(function() {
-      console.log((primaryInputDo._value ? primaryInputDo._value : "") + secondaryInputDo._value.join(" ") + " -> " + outputDo._value);
-      this.done();
-    }.bind(this), 200);
-  });
+  var primaryInputPromise;
+  if(node.rule.primaryInput instanceof MagicFileList) primaryInputPromise = Promise.resolve(undefined);
+  else if(node.rule.primaryInput instanceof MagicFile) primaryInputPromise = node.rule.primaryInput.name()();
+  else primaryInputPromise = node.rule.primaryInput();
 
-  var primaryInputDo;
-  if(node.rule.primaryInput instanceof MagicFileList) primaryInputDo = context.do.value(undefined);
-  else if(node.rule.primaryInput instanceof MagicFile) primaryInputDo = node.rule.primaryInput.name()();
-  else primaryInputDo = node.rule.primaryInput();
-
-  primaryInputDo.then(function primaryInput(filename){ 
+  primaryInputPromise.then(function primaryInput(filename){ 
     if(filename && !Array.isArray(filename)) {
       var input = nodeForFile(context, filename);
       input.outputs.push(node);
       node.primaryInput = input;
-      node.do.connectFrom(input.do);
       processNode(context, input);
+      printGraph(context.nodes);
+      return input;
     }
+
+    return undefined;
   });
 
-  var outputDo;
-  if(typeof node.rule.output === "string") outputDo = context.do.value(node.rule.output);
-  else outputDo = node.rule.output(primaryInputDo);
+  var outputPromise;
+  if(typeof node.rule.output === "string") outputPromise = Promise.resolve(node.rule.output);
+  else outputPromise = node.rule.output(primaryInputPromise);
 
-  outputDo.then(function outputFn (output) {
+  outputPromise.then(function outputFn (output) {
     var out = nodeForFile(context, output);
     node.outputs.push(out);
     out.inputs.push(node);
-    out.do.connectFrom(node.do);
-    out.do.unpause();
     processNode(context, out);
+    return out;
   });
 
-  var secondaryInputDo;
-  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputDo = node.rule.primaryInput.names()();
-  else secondaryInputDo = node.rule.secondaryInputs();
+  var secondaryInputPromise;
+  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputPromise = node.rule.primaryInput.names()();
+  else secondaryInputPromise = node.rule.secondaryInputs();
 
-  secondaryInputDo.then(function secondaryInput(resolved) {
-    node.secondaryInputs = [];
+  secondaryInputPromise.then(function secondaryInput(resolved) {
+    var secondaryInputs = [];
+
     resolved.forEach(function(file) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
-      node.secondaryInputs.push(input);
-      node.do.connectFrom(input.do);
+      secondaryInputs.push(input);
       processNode(context, input);
     });
+
+    return secondaryInputs;
   });
 
   if(!node.rule.stage.multi) node.rule.stage.magic.setFile(undefined);
   else node.rule.stage.magic._lazies = undefined;
 
-  node.do.connectFrom(primaryInputDo);
-  node.do.connectFrom(secondaryInputDo);
-  node.do.connectFrom(outputDo);
+  node.promise = Promise.all([primaryInputPromise, secondaryInputPromise, outputPromise], function(primaryInput, secondaryInputs, output) {
+    var inputNodePromises = primaryInput ? [ primaryInput.promise ] : [];
+    secondaryInputs.forEach(function(input) {
+      inputNodePromises.push(input.promise);
+    });
+
+    return Promise.all(inputNodePromises).then(function() {
+      return performOperation(node);
+    }).then(function() {
+      node.output.ready();
+    });
+  });
 }
 
 function sumTruthy(arr) {
@@ -332,7 +298,8 @@ function FileNode(context, file) {
   this.inputs = [];
   this.outputs = [];
   this.lazy = new LazyFile(context, file);
-  this.do = context.do.defer(file);
+  this._deferred = Promise.defer();
+  this.promise = this._deferred.promise;
 }
 
 FileNode.prototype.complete = function() {
@@ -379,22 +346,22 @@ MagicFileList.prototype.names = function() {
 };
 
 function LazyFileList(context) {
-  this._filenames = context.do.defer();
+  this._filenames = Promise.defer();
 };
 
 LazyFileList.prototype.getFilenames = function() {
-  return this._filenames;
+  return this._filenames.promise;
 };
 
 LazyFileList.prototype._setFilenames = function(filenames) {
-  this._filenames.done(filenames);
+  this._filenames.resolve(filenames);
 };
 
 function LazyFile(context, filename) {
-  this._filename = fez.defer();
-  this._asBuffer = fez.defer();
+  this._filename = Promise.defer();
+  this._asBuffer = Promise.defer();
 
-  if(filename) this._filename.done(filename);
+  if(filename) this._filename.resolve(filename);
 };
 
 LazyFile.prototype._setFilename = function(filename) {
@@ -414,11 +381,11 @@ LazyFile.prototype._loadFile = function(filename) {
 };
 
 LazyFile.prototype.getFilename = function() {
-  return this._filename;
+  return this._filename.promise;
 };
 
 LazyFile.prototype.asBuffer = function() {
-  return this._asBuffer;
+  return this._asBuffer.promise;
 };
 
 function toArray(obj) {
@@ -596,15 +563,3 @@ fez.mapFile = function(pattern) {
     });
   };
 };
-
-fez.defer = function(fn) {
-  if(fn) {
-
-  } else {
-    return new Deferred();
-  }
-};
-
-function Deferred() {
-  
-}
