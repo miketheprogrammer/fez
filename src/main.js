@@ -206,14 +206,16 @@ function evaluateOperation(context, node) {
   if(!node.rule.stage.multi) node.rule.stage.magic.setFile(undefined);
   else node.rule.stage.magic._lazies = undefined;
 
-  node.promise = Promise.all([primaryInputPromise, secondaryInputPromise, outputPromise], function(primaryInput, secondaryInputs, output) {
+  node.promise = Promise.all([primaryInputPromise, secondaryInputPromise, outputPromise]).spread(function(primaryInput, secondaryInputs, output) {
     var inputNodePromises = primaryInput ? [ primaryInput.promise ] : [];
     secondaryInputs.forEach(function(input) {
       inputNodePromises.push(input.promise);
     });
 
-    return Promise.all(inputNodePromises).then(function() {
-      return performOperation(node);
+    console.log(inputNodePromises);
+
+    return Promise.all(inputNodePromises).then(function(values) {
+      return console.log(values.join(" "), "->", output.file);
     }).then(function() {
       node.output.ready();
     });
