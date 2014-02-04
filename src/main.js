@@ -17,7 +17,7 @@ var util = require("util"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
     Set = require("./set.js"),
-    Do = require("./do.js"),
+    Deferred = require("./deferred.js"),
     fezUtil = require("./util.js");
 
 function fez(module) {
@@ -26,30 +26,42 @@ function fez(module) {
   }
 }
 
+fez.defer = function(fn) {
+  var deferred = new Deferred();
+  if(fn) deferred.unpause(fn);
+  return deferred;
+};
+
+fez.value = function(val) {
+  return fez.defer(function(resolve) {
+    resolve(val);
+  });
+};
+
 var id = 0;
 
 function processTarget(target) {
   var stages = [],
       currentStage = null,
       spec = {},
-      context = { nodes: new Set(), stages: stages, do: new Do() }; 
+      context = { nodes: new Set(), stages: stages }; 
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
     if(arguments.length === 3 && Array.isArray(primaryInput)) {
       fn = output;
       output = secondaryInputs;
       secondaryInputs = primaryInput;
-      primaryInput = function() { return context.do.value(undefined); };
+      primaryInput = function() { return fez.value(undefined); };
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
-      secondaryInputs = function() { return context.do.value([]); };
+      secondaryInputs = function() { return fez.value([]); };
     }
 
     if(typeof output === "string") {
       var out = output;
       output = function() {
-        return context.do.value(out);
+        return fez.value(out);
       };
     }
 
@@ -80,7 +92,8 @@ function processTarget(target) {
   target(spec);
 
   loadInitialNodes(context);
-
+  
+  /*
   context.do.on("fixed", function() {
     var any = false;
     context.nodes.array().forEach(function(node) {
@@ -104,6 +117,7 @@ function processTarget(target) {
       else console.log("Done");
     }
   });
+   */
 
   context.do.unspool();
 };
@@ -331,6 +345,7 @@ FileNode.prototype.isComplete = function() {
   return !!this._complete;
 };
 
+
 function callfn(fn) {
   if(typeof fn === "function")
     return fn();
@@ -376,8 +391,8 @@ LazyFileList.prototype._setFilenames = function(filenames) {
 };
 
 function LazyFile(context, filename) {
-  this._filename = context.do.defer();
-  this._asBuffer = context.do.defer();
+  this._filename = fez.defer();
+  this._asBuffer = fez.defer();
 
   if(filename) this._filename.done(filename);
 };
@@ -582,4 +597,14 @@ fez.mapFile = function(pattern) {
   };
 };
 
+fez.defer = function(fn) {
+  if(fn) {
 
+  } else {
+    return new Deferred();
+  }
+};
+
+function Deferred() {
+  
+}
