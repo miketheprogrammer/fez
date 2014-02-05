@@ -20,6 +20,8 @@ Input.prototype.asBuffer = function() {
     });
   } else if (this._buffer) {
     return this._buffer;
+  } else {
+    throw new Error("What?");
   }
 };
 
