@@ -192,7 +192,6 @@ function evaluateOperation(context, node) {
   if(primaryInput && !Array.isArray(primaryInput)) {
     var primaryInputNode = nodeForFile(context, primaryInput);
     primaryInputNode.outputs.push(node);
-    node.inputs.push(primaryInputNode);
     node.primaryInput = primaryInputNode;
   }
 
@@ -605,11 +604,14 @@ function resolveRuleInput(input) {
 
 module.exports = fez;
 
+fez.allInputs = function(primary, secondary) {
+  return (primary ? [primary] : []).concat(secondary);
+};
 
 fez.exec = function(command) {
-  function ex(inputs, outputs) {
-    var ifiles = toArray(inputs).map(function(i) { return i.getFilename(); }).join(" "),
-        ofiles = outputs.join(" "),
+  function ex(primary, secondary, output) {
+    var ifiles = fez.allInputs(primary, secondary).map(function(i) { return i.getFilename(); }).join(" "),
+        ofiles = output.join(" "),
         pcommand = command.
           replace("%i", ifiles).
           replace("%o", ofiles);
