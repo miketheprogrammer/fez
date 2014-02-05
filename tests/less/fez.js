@@ -9,11 +9,11 @@ exports.build = function(spec) {
   });
 
   spec.with("css/*.css").each(function(file) {
-    spec.rule(file, fez.mapFile("dist/%f.min.css"), clean());
+    spec.rule(file, file.map("dist/%f.min.css"), clean());
   });
 
   spec.with("*.less").each(function(file) {
-    spec.rule(file, fez.mapFile("css/%f.css"), less({}));
+    spec.rule(file, file.map("css/%f.css"), less({}));
   });
 };
 

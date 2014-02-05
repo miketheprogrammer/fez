@@ -39,11 +39,6 @@ function processTarget(target) {
       fn = secondaryInputs;
       output = undefined;
       secondaryInputs = undefined;
-    } else if(arguments.length === 3 && Array.isArray(primaryInput)) {
-      fn = output;
-      output = secondaryInputs;
-      secondaryInputs = primaryInput;
-      primaryInput = function() { return Promise.resolve(undefined); };
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
@@ -184,41 +179,44 @@ function evaluateOperation(context, node) {
   if(node.rule.stage.multi) node.rule.stage.magic._lazies = node.lazies;
   else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
 
-  var primaryInput;
-  if(node.rule.primaryInput instanceof MagicFileList) primaryInput = undefined;
-  else if(node.rule.primaryInput instanceof MagicFile) primaryInput = node.rule.primaryInput.name();
-  else primaryInput = node.rule.primaryInput();
+  var primaryInputPromise;
+  if(node.rule.primaryInput instanceof MagicFileList) primaryInputPromise = node.rule.primaryInput.names();
+  else if(node.rule.primaryInput instanceof MagicFile) primaryInputPromise = node.rule.primaryInput.name();
+  else primaryInputPromise = node.rule.primaryInput();
 
-  if(primaryInput && !Array.isArray(primaryInput)) {
-    var primaryInputNode = nodeForFile(context, primaryInput);
-    primaryInputNode.outputs.push(node);
-    node.primaryInput = primaryInputNode;
-  }
+  primaryInputPromise = primaryInputPromise.then(function(resolved) {
+    var primaryInputs = [];
+
+    toArray(resolved).forEach(function(file) {
+      var input = nodeForFile(context, file);
+      input.outputs.push(node);
+      primaryInputs.push(input);
+    });
+
+    return primaryInputs;
+  });
 
   var output;
   if(typeof node.rule.output === "string") {
     output = node.rule.output;
+    createOutNode();
   } else if(node.rule.output) { 
-    output = node.rule.output(primaryInput);
+    output = node.rule.output();
+    createOutNode();
   }
-
-  createOutNode();
 
   var outNode;
   function createOutNode() {
-    if(output) {
-      outNode = nodeForFile(context, output);
-      node.outputs.push(outNode);
-      outNode.inputs.push(node);
-      node.output = outNode;
-    }
+    outNode = nodeForFile(context, output);
+    node.outputs.push(outNode);
+    outNode.inputs.push(node);
+    node.output = outNode;
   }
 
   var secondaryInputPromise;
-  if(node.rule.primaryInput instanceof MagicFileList) secondaryInputPromise = node.rule.primaryInput.names()();
-  else secondaryInputPromise = node.rule.secondaryInputs();
+  secondaryInputPromise = node.rule.secondaryInputs();
 
-  secondaryInputPromise = secondaryInputPromise.then(function secondaryInput(resolved) {
+  secondaryInputPromise = secondaryInputPromise.then(function(resolved) {
     var secondaryInputs = [];
 
     resolved.forEach(function(file) {
@@ -250,9 +248,10 @@ function evaluateOperation(context, node) {
   if(!node.rule.stage.multi) node.rule.stage.magic.setFile(undefined);
   else node.rule.stage.magic._lazies = undefined;
 
-  node.promise = secondaryInputPromise.then(function(secondaryInputs) {
+  node.promise = Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInputs, secondaryInputs) {
     node.secondaryInputs = secondaryInputs;
-    return Promise.all(flatten([secondaryInputs.map(promise), primaryInputNode ? primaryInputNode.promise : undefined])).then(function() {
+    node.primaryInputs = primaryInputs;
+    return Promise.all(flatten([node.primaryInputs.map(promise), secondaryInputs.map(promise)])).then(function() {
       return performOperation(node).then(function() {
         outNode.complete();
       });
@@ -269,15 +268,13 @@ function file(node) {
 function performOperation(node) {
   if(node.complete) return Promise.resolve(false);
 
-  var inputs = (node.primaryInput ? [node.primaryInput.file] : []).concat(node.secondaryInputs.map(file)),
+  var inputs = node.primaryInputs.map(file).concat(node.secondaryInputs.map(file)),
       output = node.output.file;
-
-  //console.log(inputs.join(" "), "->", output);
 
   node.complete = true;
 
   if(needsUpdate(inputs, [output])) {
-    var out = node.rule.fn({ primary: node.primaryInput ? new Input(node.primaryInput.file) : undefined, secondary: buildInputs(node.secondaryInputs.map(file)), all: function() { return fez.allInputs(this.primary, this.secondary); } }, [output]);
+    var out = node.rule.fn(buildInputs(node.primaryInputs.map(file)), [output]);
     return processOutput(out, output, inputs);
   } else {
     return Promise.resolve(false);
@@ -445,7 +442,7 @@ function MagicFile() {
 };
 
 MagicFile.prototype.name = function() {
-  return this._lazy.getFilename();
+  return Promise.resolve(this._lazy.getFilename());
 };
 
 MagicFile.prototype.setFile = function(lazy) {
@@ -456,13 +453,36 @@ MagicFile.prototype.inspect = function() {
   return this._lazy;
 };
 
+MagicFile.prototype.map = function(pattern) {
+  return function() {
+    var input = this.inspect().getFilename();
+    var f = (function() {
+      var basename = path.basename(input);
+      var hidden = false;
+      if(basename.charAt(0) == ".") {
+        hidden = true;
+        basename = basename.slice(1);
+      }
+
+      var split = basename.split(".");
+      if(split.length > 1) {
+        if(hidden) return "." + split.slice(0, -1).join(".");
+        else return split.slice(0, -1).join(".");
+      } else {
+        if(hidden) return "." + basename;
+        else return basename;
+      }
+    })();
+
+    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
+  }.bind(this);
+};
+
 function MagicFileList() {
 };
 
 MagicFileList.prototype.names = function() {
-  return function() {
-    return this._lazies.getFilenames();
-  }.bind(this);
+  return this._lazies.getFilenames();
 };
 
 function LazyFileList(context) {
@@ -518,10 +538,10 @@ function writep(file, data) {
   });
 }
 
-function needsUpdate(inputs, outputs, changelist) {
+function needsUpdate(inputs, outputs) {
   var stat = fs.statSync("./fez.js"),
       mtime = stat.mtime.getTime();
-  
+
   var oldestOutput = Number.MAX_VALUE;
   outputs.forEach(function(out) {
     var dir = path.dirname(out);
@@ -552,7 +572,7 @@ function needsUpdate(inputs, outputs, changelist) {
       newestInput = 0;
     }
   });
-  
+
   return (mtime > oldestOutput) || (newestInput > oldestOutput);
 }
 
@@ -612,7 +632,7 @@ fez.allInputs = function(primary, secondary) {
 
 fez.exec = function(command) {
   function ex(inputs, output) {
-    var ifiles = inputs.all().map(function(i) { return i.getFilename(); }).join(" "),
+    var ifiles = inputs.map(function(i) { return i.getFilename(); }).join(" "),
         ofiles = output.join(" "),
         pcommand = command.
           replace("%i", ifiles).
@@ -628,28 +648,4 @@ fez.exec = function(command) {
 
   ex.value = command;
   return ex;
-};
-
-fez.mapFile = function(pattern) {
-  return function(input) {
-    var f = (function() {
-      var basename = path.basename(input);
-      var hidden = false;
-      if(basename.charAt(0) == ".") {
-        hidden = true;
-        basename = basename.slice(1);
-      }
-
-      var split = basename.split(".");
-      if(split.length > 1) {
-        if(hidden) return "." + split.slice(0, -1).join(".");
-        else return split.slice(0, -1).join(".");
-      } else {
-        if(hidden) return "." + basename;
-        else return basename;
-      }
-    })();
-
-    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
-  };
 };
