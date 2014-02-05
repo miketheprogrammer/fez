@@ -272,10 +272,12 @@ function performOperation(node) {
   var inputs = (node.primaryInput ? [node.primaryInput.file] : []).concat(node.secondaryInputs.map(file)),
       output = node.output.file;
 
+  //console.log(inputs.join(" "), "->", output);
+
   node.complete = true;
 
   if(needsUpdate(inputs, [output])) {
-    var out = node.rule.fn(node.primaryInput ? new Input(node.primaryInput.file) : undefined, buildInputs(node.secondaryInputs.map(file)), [output]);
+    var out = node.rule.fn({ primary: node.primaryInput ? new Input(node.primaryInput.file) : undefined, secondary: buildInputs(node.secondaryInputs.map(file)), all: function() { return fez.allInputs(this.primary, this.secondary); } }, [output]);
     return processOutput(out, output, inputs);
   } else {
     return Promise.resolve(false);
