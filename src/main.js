@@ -611,8 +611,8 @@ fez.allInputs = function(primary, secondary) {
 };
 
 fez.exec = function(command) {
-  function ex(primary, secondary, output) {
-    var ifiles = fez.allInputs(primary, secondary).map(function(i) { return i.getFilename(); }).join(" "),
+  function ex(inputs, output) {
+    var ifiles = inputs.all().map(function(i) { return i.getFilename(); }).join(" "),
         ofiles = output.join(" "),
         pcommand = command.
           replace("%i", ifiles).
