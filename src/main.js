@@ -204,7 +204,7 @@ function evaluateOperation(context, node) {
   if(node.evaluated) return false;
   node.evaluated = true;
   if(node.rule.stage.multi) node.rule.stage.proxy._lazies = node.lazies;
-  else node.rule.stage.proxy.setFile(node.stageInputs[0].lazy);
+  else node.rule.stage.proxy._setFile(node.stageInputs[0].lazy);
 
   var primaryInputPromise;
   if(node.rule.primaryInput instanceof ProxyFileList) primaryInputPromise = node.rule.primaryInput.names();
@@ -271,7 +271,7 @@ function evaluateOperation(context, node) {
     return secondaryInputs;
   });
 
-  if(!node.rule.stage.multi) node.rule.stage.proxy.setFile(undefined);
+  if(!node.rule.stage.multi) node.rule.stage.proxy._setFile(undefined);
   else node.rule.stage.proxy._lazies = undefined;
 
   node.promise = Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInputs, secondaryInputs) {
@@ -474,11 +474,7 @@ function callfn(fn) {
 function ProxyFile() {
 };
 
-ProxyFile.prototype.name = function() {
-  return Promise.resolve(this._lazy.getFilename());
-};
-
-ProxyFile.prototype.setFile = function(lazy) {
+ProxyFile.prototype._setFile = function(lazy) {
   this._lazy = lazy;
 };
 
@@ -488,12 +484,40 @@ ProxyFile.prototype.inspect = function() {
 
 ProxyFile.prototype.map = function(fn) {
   return function() {
-    return fn(this.inspect.getFilename());
+    return fn(this.inspect().getFilename());
   }.bind(this);
 };
 
-function ProxyFileList() {
+ProxyFile.prototype.patsubst = function(pattern, replacement) {
+  return this.map(fez.patsubst.bind(this, pattern, replacement));
 };
+
+ProxyFile.prototype.simpleMap = function(pattern) {
+  return function() {
+    var input = this.inspect().getFilename();
+    var f = (function() {
+      var basename = path.basename(input);
+      var hidden = false;
+      if(basename.charAt(0) == ".") {
+        hidden = true;
+        basename = basename.slice(1);
+      }
+
+      var split = basename.split(".");
+      if(split.length > 1) {
+        if(hidden) return "." + split.slice(0, -1).join(".");
+        else return split.slice(0, -1).join(".");
+      } else {
+        if(hidden) return "." + basename;
+        else return basename;
+      }
+    })();
+
+    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
+  }.bind(this);
+};
+
+function ProxyFileList() { };
 
 ProxyFileList.prototype.names = function() {
   return this._lazies.getFilenames();
@@ -662,4 +686,15 @@ fez.exec = function(command) {
 
   ex.value = command;
   return ex;
+};
+
+fez.patsubst = function(pattern, replacement) {
+  return function(string) {
+    var regex = new RegExp(pattern.replace(".", "\\.").replace("%", "(.+)")),
+        result = regex.exec(string),
+        sub = result[1],
+        out = replacement.replace("%", sub);
+
+    return out;
+  };
 };
