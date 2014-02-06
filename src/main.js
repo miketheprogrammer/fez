@@ -23,15 +23,38 @@ var id = 0;
 
 function fez(module) {
   if(require.main === module) {
-    processTarget(module.exports.default);
+    var options = xtend({ output: true }, getOptions()),
+        target = getTarget(options);
+    //process.chdir(path.dirname(module.filename));
+    options.module = module;
+    processTarget(module.exports[target], options);
   }
 }
 
-function processTarget(target) {
+function getOptions() {
+  return nopt({
+    "verbose": Boolean,
+    "quiet": Boolean,
+    "clean": Boolean,
+    "dot": Boolean,
+    "no-output": Boolean
+  }, {
+    "v": "--verbose",
+    "q": "--quiet",
+    "c": "--clean",
+    "n": "--no-output"
+  });
+}
+
+function getTarget(options) {
+  return options.argv.remain.length ? options.argv.remain[0] : 'default';
+}
+
+function processTarget(target, options) {
   var stages = [],
       currentStage = null,
       spec = {},
-      context = { nodes: new Set(), stages: stages, worklist: [] };
+      context = { nodes: new Set(), stages: stages, worklist: [], options: options };
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
     if(arguments.length === 2) {
@@ -251,7 +274,7 @@ function evaluateOperation(context, node) {
     node.secondaryInputs = secondaryInputs;
 
     return Promise.all(flatten([node.primaryInputs.map(promise), secondaryInputs.map(promise)])).then(function() {
-      return performOperation(node).then(function() {
+      return performOperation(node, context).then(function() {
         outNode.complete();
       });
     });
@@ -264,17 +287,20 @@ function file(node) {
   return node.file;
 }
 
-function performOperation(node) {
+function performOperation(node, context) {
   if(node.complete) return Promise.resolve(false);
 
   var inputs = node.primaryInputs.map(file).concat(node.secondaryInputs.map(file)),
       output = node.output.file;
 
+  if(context.options.verbose)
+    console.log(inputs.join(" "), "->", output);
+
   node.complete = true;
 
   if(needsUpdate(inputs, [output])) {
     var out = node.rule.fn(buildInputs(node.primaryInputs.map(file)), [output]);
-    return processOutput(out, output, inputs);
+    return processOutput(out, output, inputs, context);
   } else {
     return Promise.resolve(false);
   }
@@ -293,7 +319,7 @@ function buildInputs(files) {
   return inputs;
 }
 
-function processOutput(out, output, inputs) {
+function processOutput(out, output, inputs, context) {
   if(isPromise(out)) {
     return out.then(function(out) {
       return processOutput(out, output, inputs);
