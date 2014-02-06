@@ -208,7 +208,7 @@ function evaluateOperation(context, node) {
 
   var primaryInputPromise;
   if(node.rule.primaryInput instanceof ProxyFileList) primaryInputPromise = node.rule.primaryInput.names();
-  else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = node.rule.primaryInput.name();
+  else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = Promise.resolve(node.rule.primaryInput.inspect().getFilename());
   else primaryInputPromise = node.rule.primaryInput();
 
   primaryInputPromise = primaryInputPromise.then(function(resolved) {
