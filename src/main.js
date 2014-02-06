@@ -17,16 +17,15 @@ var util = require("util"),
     xtend = require("xtend"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
-    Set = require("./set.js"),
-    fezUtil = require("./util.js");
+    Set = require("./set.js");
+
+var id = 0;
 
 function fez(module) {
   if(require.main === module) {
     processTarget(module.exports.default);
   }
 }
-
-var id = 0;
 
 function processTarget(target) {
   var stages = [],
