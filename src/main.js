@@ -129,6 +129,11 @@ function work(context) {
     setImmediate(work.bind(this, context));
   } else {
     //printGraph(context.nodes);
+    Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
+      if(!any(work)) {
+        console.log("Nothing to be done.");
+      }
+    });
 
     context.nodes.array().filter(isMulti).forEach(function(node) {
       node.lazies._setFilenames(node.stageInputs.map(file));
@@ -274,8 +279,9 @@ function evaluateOperation(context, node) {
     node.secondaryInputs = secondaryInputs;
 
     return Promise.all(flatten([node.primaryInputs.map(promise), secondaryInputs.map(promise)])).then(function() {
-      return performOperation(node, context).then(function() {
+      return performOperation(node, context).then(function(val) {
         outNode.complete();
+        return val;
       });
     });
   });
