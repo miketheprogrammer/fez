@@ -73,19 +73,19 @@ function processTarget(target, options) {
   spec.with = function(glob) {
     return {
       each: function(fn) {
-        var magic = new MagicFile(),
-            stage = currentStage = { inputs: toArray(glob), rules: [], magic: magic };
+        var proxy = new ProxyFile(),
+            stage = currentStage = { inputs: toArray(glob), rules: [], proxy: proxy };
 
         stages.push(stage);
-        fn(magic);
+        fn(proxy);
         currentStage = null;
       },
       all: function(fn) {
-        var magic = new MagicFileList(),
-            stage = currentStage = { inputs: toArray(glob), rules: [], multi: true, magic: magic };
+        var proxy = new ProxyFileList(),
+            stage = currentStage = { inputs: toArray(glob), rules: [], multi: true, proxy: proxy };
 
         stages.push(stage);
-        fn(magic);
+        fn(proxy);
         currentStage = null;
       }
     };
@@ -128,9 +128,9 @@ function work(context) {
   if(changed || context.worklist.length > 0) {
     setImmediate(work.bind(this, context));
   } else {
-    //printGraph(context.nodes);
     Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
-      if(!any(work)) {
+      if(context.options.dot) printGraph(context.nodes);
+      if(!context.quiet && !any(work)) {
         console.log("Nothing to be done.");
       }
     });
@@ -203,12 +203,12 @@ function checkFile(context, node) {
 function evaluateOperation(context, node) {
   if(node.evaluated) return false;
   node.evaluated = true;
-  if(node.rule.stage.multi) node.rule.stage.magic._lazies = node.lazies;
-  else node.rule.stage.magic.setFile(node.stageInputs[0].lazy);
+  if(node.rule.stage.multi) node.rule.stage.proxy._lazies = node.lazies;
+  else node.rule.stage.proxy.setFile(node.stageInputs[0].lazy);
 
   var primaryInputPromise;
-  if(node.rule.primaryInput instanceof MagicFileList) primaryInputPromise = node.rule.primaryInput.names();
-  else if(node.rule.primaryInput instanceof MagicFile) primaryInputPromise = node.rule.primaryInput.name();
+  if(node.rule.primaryInput instanceof ProxyFileList) primaryInputPromise = node.rule.primaryInput.names();
+  else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = node.rule.primaryInput.name();
   else primaryInputPromise = node.rule.primaryInput();
 
   primaryInputPromise = primaryInputPromise.then(function(resolved) {
@@ -271,8 +271,8 @@ function evaluateOperation(context, node) {
     return secondaryInputs;
   });
 
-  if(!node.rule.stage.multi) node.rule.stage.magic.setFile(undefined);
-  else node.rule.stage.magic._lazies = undefined;
+  if(!node.rule.stage.multi) node.rule.stage.proxy.setFile(undefined);
+  else node.rule.stage.proxy._lazies = undefined;
 
   node.promise = Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInputs, secondaryInputs) {
     node.primaryInputs = primaryInputs;
@@ -471,50 +471,31 @@ function callfn(fn) {
   return fn;
 }
 
-function MagicFile() {
+function ProxyFile() {
 };
 
-MagicFile.prototype.name = function() {
+ProxyFile.prototype.name = function() {
   return Promise.resolve(this._lazy.getFilename());
 };
 
-MagicFile.prototype.setFile = function(lazy) {
+ProxyFile.prototype.setFile = function(lazy) {
   this._lazy = lazy;
 };
 
-MagicFile.prototype.inspect = function() {
+ProxyFile.prototype.inspect = function() {
   return this._lazy;
 };
 
-MagicFile.prototype.map = function(pattern) {
+ProxyFile.prototype.map = function(fn) {
   return function() {
-    var input = this.inspect().getFilename();
-    var f = (function() {
-      var basename = path.basename(input);
-      var hidden = false;
-      if(basename.charAt(0) == ".") {
-        hidden = true;
-        basename = basename.slice(1);
-      }
-
-      var split = basename.split(".");
-      if(split.length > 1) {
-        if(hidden) return "." + split.slice(0, -1).join(".");
-        else return split.slice(0, -1).join(".");
-      } else {
-        if(hidden) return "." + basename;
-        else return basename;
-      }
-    })();
-
-    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
+    return fn(this.inspect.getFilename());
   }.bind(this);
 };
 
-function MagicFileList() {
+function ProxyFileList() {
 };
 
-MagicFileList.prototype.names = function() {
+ProxyFileList.prototype.names = function() {
   return this._lazies.getFilenames();
 };
 
