@@ -12,8 +12,8 @@ exports.build = function(spec) {
     spec.rule(file, file.map("dist/%f.min.css"), clean());
   });
 
-  spec.with("*.less").each(function(file) {
-    spec.rule(file, file.map("css/%f.css"), less({}));
+  spec.with("main.less").each(function(file) {
+    spec.rule(file, less.imports(file), file.map("css/%f.css"), less({}));
   });
 };
 

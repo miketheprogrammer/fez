@@ -217,12 +217,11 @@ function evaluateOperation(context, node) {
   secondaryInputPromise = node.rule.secondaryInputs();
 
   secondaryInputPromise = secondaryInputPromise.then(function(resolved) {
-    var secondaryInputs = [];
-
-    resolved.forEach(function(file) {
+    var secondaryInputs = resolved.map(function(file) {
       var input = nodeForFile(context, file);
+      input.complete();
       input.outputs.push(node);
-      secondaryInputs.push(input);
+      return input;
     });
 
     if(!output) {
@@ -249,8 +248,9 @@ function evaluateOperation(context, node) {
   else node.rule.stage.magic._lazies = undefined;
 
   node.promise = Promise.all([primaryInputPromise, secondaryInputPromise]).spread(function(primaryInputs, secondaryInputs) {
-    node.secondaryInputs = secondaryInputs;
     node.primaryInputs = primaryInputs;
+    node.secondaryInputs = secondaryInputs;
+
     return Promise.all(flatten([node.primaryInputs.map(promise), secondaryInputs.map(promise)])).then(function() {
       return performOperation(node).then(function() {
         outNode.complete();
@@ -422,9 +422,11 @@ function FileNode(context, file) {
 }
 
 FileNode.prototype.complete = function() {
-  this.lazy._loadFile();
-  this._deferred.resolve();
-  this._complete = true;
+  if(!this._complete) {
+    this.lazy._loadFile();
+    this._deferred.resolve();
+    this._complete = true;
+  }
 };
 
 FileNode.prototype.isComplete = function() {
