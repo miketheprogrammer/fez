@@ -15,10 +15,8 @@ test('less project', function(t) {
 
   function stat() {
     t.ok(fs.existsSync('tests/less/css/main.css'));
-    t.ok(fs.existsSync('tests/less/css/mobile.css'));
     t.ok(fs.existsSync('tests/less/dist/reset.min.css'));
     t.ok(fs.existsSync('tests/less/dist/main.min.css'));
-    t.ok(fs.existsSync('tests/less/dist/mobile.min.css'));
     t.ok(fs.existsSync('tests/less/dist.min.css'));
 
     teardown();
