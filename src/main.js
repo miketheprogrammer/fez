@@ -304,7 +304,7 @@ function performOperation(node, context) {
 
   node.complete = true;
 
-  if(needsUpdate(inputs, [output])) {
+  if(needsUpdate(inputs, [output], context)) {
     var out = node.rule.fn(buildInputs(node.primaryInputs.map(file)), [output]);
     return processOutput(out, output, inputs, context);
   } else {
@@ -571,8 +571,8 @@ function writep(file, data) {
   });
 }
 
-function needsUpdate(inputs, outputs) {
-  var stat = fs.statSync("./fez.js"),
+function needsUpdate(inputs, outputs, context) {
+  var stat = fs.statSync(context.options.module.filename),
       mtime = stat.mtime.getTime();
 
   var oldestOutput = Number.MAX_VALUE;
