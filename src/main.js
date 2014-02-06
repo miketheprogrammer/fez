@@ -479,6 +479,7 @@ ProxyFile.prototype._setFile = function(lazy) {
 };
 
 ProxyFile.prototype.inspect = function() {
+  if(this._lazy === undefined) throw new Error("Can't call inspect() outside of a lazy function");
   return this._lazy;
 };
 
