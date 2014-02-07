@@ -107,6 +107,13 @@ Match.prototype.each = function(fn) {
   this.resetStage();
 };
 
+Match.prototype.one = function(fn) {
+  var proxy = new ProxyFile();
+  this.setStage({ input: this.fn, rules: [], proxy: proxy, one: true, matched: false });
+  fn(proxy);
+  this.resetStage();
+};
+
 Match.prototype.all = function(fn) {
   var proxy = new ProxyFileList();
   this.setStage({ input: this.fn, rules: [], multi: true, proxy: proxy });
@@ -428,6 +435,13 @@ function matchAgainstStage(context, node, stage) {
   var anyMatch = stage.input(node.file);
 
   if(anyMatch) {
+    if(stage.one && stage.matched) {
+      //TODO: say which stage/glob is matching
+      console.log("Warning: a with(...).one(...) matches multiple files. Only using first match.");
+      return false;
+    } else if (stage.one) {
+      stage.matched = true;
+    }
     var change = false;
 
     stage.rules.forEach(function(rule) {
