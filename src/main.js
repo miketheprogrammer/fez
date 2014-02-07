@@ -641,8 +641,7 @@ function flatten(arrays) {
 }
 
 function toPromise(p) {
-  if(isPromise(p)) return p;
-  return Promise.resolve(p);
+  return Promise.cast(p);
 }
 
 function resolveRuleInputs(rule) {
