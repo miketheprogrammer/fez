@@ -71,29 +71,47 @@ function processTarget(target, options) {
   };
 
   spec.with = function(glob) {
-    return {
-      each: function(fn) {
-        var proxy = new ProxyFile(),
-            stage = currentStage = { inputs: toArray(glob), rules: [], proxy: proxy };
-
-        stages.push(stage);
-        fn(proxy);
-        currentStage = null;
-      },
-      all: function(fn) {
-        var proxy = new ProxyFileList(),
-            stage = currentStage = { inputs: toArray(glob), rules: [], multi: true, proxy: proxy };
-
-        stages.push(stage);
-        fn(proxy);
-        currentStage = null;
-      }
-    };
+    return new Match(function(file) {
+      return minimatch(file, glob);
+    }, function(stage) {
+      stages.push(stage);
+      currentStage = stage;
+    }, function () {
+      currentStage = undefined;
+    });
   };
 
   target(spec);
 
   loadInitialNodes(context);
+};
+
+function Match(fn, setStage, resetStage) {
+  this.fn = fn;
+  this.setStage = setStage;
+  this.resetStage = resetStage;
+};
+
+Match.prototype.not = function(glob) {
+  var fn = this.fn;
+
+  return new Match(function(file) {
+    return fn(file) && !minimatch(file, glob);
+  }, this.setStage, this.resetStage);
+};
+
+Match.prototype.each = function(fn) {
+  var proxy = new ProxyFile();
+  this.setStage({ input: this.fn, rules: [], proxy: proxy });
+  fn(proxy);
+  this.resetStage();
+};
+
+Match.prototype.all = function(fn) {
+  var proxy = new ProxyFileList();
+  this.setStage({ input: this.fn, rules: [], multi: true, proxy: proxy });
+  fn(proxy);
+  this.resetStage();
 };
 
 function loadInitialNodes(context) {
@@ -105,9 +123,10 @@ function loadInitialNodes(context) {
         inputs = inputs.concat(glob.sync(g));
       });
     } else {
-      inputs = flatten(stage.inputs.map(function(input) {
-        return glob.sync(input);
-      }));
+      var files = glob.sync("**");
+      inputs = files.filter(function(file) {
+        return stage.input(file);
+      });
     }
 
     inputs.forEach(function(filename) {
@@ -406,7 +425,7 @@ function prop(p) {
 
 function matchAgainstStage(context, node, stage) {
   assert(isFile(node));
-  var anyMatch = any(stage.inputs.map(minimatch.bind(this, node.file)));
+  var anyMatch = stage.input(node.file);
 
   if(anyMatch) {
     var change = false;

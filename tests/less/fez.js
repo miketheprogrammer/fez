@@ -12,7 +12,7 @@ exports.build = function(spec) {
     spec.rule(file, file.simpleMap("dist/%f.min.css"), clean());
   });
 
-  spec.with("main.less").each(function(file) {
+  spec.with("*.less").not("mobile.less").each(function(file) {
     spec.rule(file, less.imports(file), file.simpleMap("css/%f.css"), less({}));
   });
 };
