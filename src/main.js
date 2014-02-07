@@ -25,7 +25,7 @@ function fez(module) {
   if(require.main === module) {
     var options = xtend({ output: true }, getOptions()),
         target = getTarget(options);
-    //process.chdir(path.dirname(module.filename));
+
     options.module = module;
     processTarget(module.exports[target], options);
   }
@@ -128,20 +128,39 @@ function work(context) {
   if(changed || context.worklist.length > 0) {
     setImmediate(work.bind(this, context));
   } else {
-    Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
-      if(context.options.dot) printGraph(context.nodes);
-      if(!context.quiet && !any(work)) {
-        console.log("Nothing to be done.");
-      }
-    });
+    if(context.options.clean) {
+      var anything = false;
+      context.nodes.array().filter(isFile).filter(not(isSource)).forEach(function(node) {
+        try {
+          fs.unlinkSync(node.file);
+          anything = true;
+          
+          if(!context.options.quiet) {
+            anything = true;
+            process.stdout.write("Removing ");
+            cursor.red();
+            console.log(node.file);
+            cursor.reset();
+          }
+        } catch(e) {}
+      });
+      if(!anything) console.log("Nothing to clean.");
+    } else {
+      Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
+        if(context.options.dot) printGraph(context.nodes);
+        if(!context.quiet && !any(work)) {
+          console.log("Nothing to be done.");
+        }
+      });
 
-    context.nodes.array().filter(isMulti).forEach(function(node) {
-      node.lazies._setFilenames(node.stageInputs.map(file));
-    });
+      context.nodes.array().filter(isMulti).forEach(function(node) {
+        node.lazies._setFilenames(node.stageInputs.map(file));
+      });
 
-    context.nodes.array().filter(isSource).forEach(function(node) {
-      node.complete();
-    });
+      context.nodes.array().filter(isSource).forEach(function(node) {
+        node.complete();
+      });
+    }
   }
 }
 
@@ -160,6 +179,12 @@ function isMulti(node) {
 function isSource(node) {
   return isFile(node) && node.inputs.length === 0;
 }
+
+function not(fn) {
+  return function(val) {
+    return !fn(val);
+  };
+};
 
 function printGraph(nodes) {
   process.stdout.write("digraph{");
