@@ -211,7 +211,7 @@ function evaluateOperation(context, node) {
   else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = Promise.resolve(node.rule.primaryInput.inspect().getFilename());
   else primaryInputPromise = node.rule.primaryInput();
 
-  primaryInputPromise = primaryInputPromise.then(function(resolved) {
+  primaryInputPromise = toPromise(primaryInputPromise).then(function(resolved) {
     var primaryInputs = [];
 
     toArray(resolved).forEach(function(file) {
@@ -243,7 +243,7 @@ function evaluateOperation(context, node) {
   var secondaryInputPromise;
   secondaryInputPromise = node.rule.secondaryInputs();
 
-  secondaryInputPromise = secondaryInputPromise.then(function(resolved) {
+  secondaryInputPromise = toPromise(secondaryInputPromise).then(function(resolved) {
     var secondaryInputs = resolved.map(function(file) {
       var input = nodeForFile(context, file);
       input.complete();
@@ -689,7 +689,7 @@ fez.exec = function(command) {
   return ex;
 };
 
-fez.patsubst = function(pattern, replacement) {
+function patsubst(pattern, replacement) {
   return function(string) {
     var regex = new RegExp(pattern.replace(".", "\\.").replace("%", "(.+)")),
         result = regex.exec(string),
