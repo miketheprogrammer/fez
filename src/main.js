@@ -748,7 +748,7 @@ fez.exec = function(command) {
 
 function patsubst(pattern, replacement) {
   return function(string) {
-    var regex = new RegExp(pattern.replace(".", "\\.").replace("%", "(.+)")),
+    var regex = new RegExp(pattern.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1").replace("%", "(.+)")),
         result = regex.exec(string),
         sub = result[1],
         out = replacement.replace("%", sub);
