@@ -70,9 +70,11 @@ function processTarget(target, options) {
     currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
   };
 
-  spec.with = function(glob) {
+  spec.with = function(globs) {
     return new Match(function(file) {
-      return minimatch(file, glob);
+      return any(toArray(globs).map(function(glob) {
+        return minimatch(file, glob);
+      }));
     }, function(stage) {
       stages.push(stage);
       currentStage = stage;
@@ -92,11 +94,13 @@ function Match(fn, setStage, resetStage) {
   this.resetStage = resetStage;
 };
 
-Match.prototype.not = function(glob) {
+Match.prototype.not = function(globs) {
   var fn = this.fn;
 
   return new Match(function(file) {
-    return fn(file) && !minimatch(file, glob);
+    return fn(file) && !any(toArray(globs).map(function(glob) {
+      minimatch(file, glob);
+    }));
   }, this.setStage, this.resetStage);
 };
 
