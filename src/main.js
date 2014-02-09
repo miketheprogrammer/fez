@@ -32,7 +32,7 @@ function fez(module) {
 }
 
 function getOptions() {
-  return nopt({
+  var options = nopt({
     "verbose": Boolean,
     "quiet": Boolean,
     "clean": Boolean,
@@ -44,6 +44,10 @@ function getOptions() {
     "c": "--clean",
     "n": "--no-output"
   });
+
+  if(options.dot) options.quiet = true;
+
+  return options;
 }
 
 function getTarget(options) {
@@ -174,11 +178,11 @@ function work(context) {
           }
         } catch(e) {}
       });
-      if(!anything) console.log("Nothing to clean.");
+      if(!anything && !context.options.quiet) console.log("Nothing to clean.");
     } else {
       Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
         if(context.options.dot) printGraph(context.nodes);
-        if(!context.quiet && !any(work)) {
+        if(!context.quiet && !any(work) && !context.options.quiet) {
           console.log("Nothing to be done.");
         }
       });
