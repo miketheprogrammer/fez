@@ -1,6 +1,12 @@
 {
   "name": "fez",
-  "version": "1.0.0",
+  "version": "1.0.4",
+  "description": "A fast build tool for JavaScript",
+  "repository": {
+    "type": "git",
+    "url": "http://github.com/fez/fez.git"
+  },
+  "author": "Isaac Wagner <isaacbwagner@gmail.com>",
   "dependencies": {
     "nopt": "~2.1.2",
     "through": "~2.3.4",
