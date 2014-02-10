@@ -1,6 +1,6 @@
 {
   "name": "fez",
-  "version": "0.1.5",
+  "version": "1.0.0",
   "dependencies": {
     "nopt": "~2.1.2",
     "through": "~2.3.4",
