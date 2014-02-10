@@ -36,13 +36,11 @@ function getOptions() {
     "verbose": Boolean,
     "quiet": Boolean,
     "clean": Boolean,
-    "dot": Boolean,
-    "no-output": Boolean
+    "dot": Boolean
   }, {
     "v": "--verbose",
     "q": "--quiet",
-    "c": "--clean",
-    "n": "--no-output"
+    "c": "--clean"
   });
 
   if(options.dot) options.quiet = true;
