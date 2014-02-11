@@ -265,7 +265,7 @@ function evaluateOperation(context, node) {
 
   var primaryInputPromise;
   if(node.rule.primaryInput instanceof ProxyFileList) primaryInputPromise = node.rule.primaryInput.names();
-  else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = Promise.resolve(node.rule.primaryInput.inspect().getFilename());
+  else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = Promise.resolve(node.rule.primaryInput._inspect().getFilename());
   else primaryInputPromise = node.rule.primaryInput();
 
   primaryInputPromise = toPromise(primaryInputPromise).then(function(resolved) {
@@ -554,14 +554,14 @@ ProxyFile.prototype._setFile = function(lazy) {
   this._lazy = lazy;
 };
 
-ProxyFile.prototype.inspect = function() {
-  if(this._lazy === undefined) throw new Error("Can't call inspect() outside of a lazy function");
+ProxyFile.prototype._inspect = function() {
+  if(this._lazy === undefined) throw new Error("Can't call inspect_() outside of a lazy function");
   return this._lazy;
 };
 
 ProxyFile.prototype.map = function(fn) {
   return function() {
-    return fn(this.inspect().getFilename());
+    return fn(this._inspect());
   }.bind(this);
 };
 
@@ -571,7 +571,7 @@ ProxyFile.prototype.patsubst = function(pattern, replacement) {
 
 ProxyFile.prototype.simpleMap = function(pattern) {
   return function() {
-    var input = this.inspect().getFilename();
+    var input = this._inspect().getFilename();
     var f = (function() {
       var basename = path.basename(input);
       var hidden = false;
