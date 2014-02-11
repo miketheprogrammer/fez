@@ -565,6 +565,12 @@ ProxyFile.prototype.map = function(fn) {
   }.bind(this);
 };
 
+ProxyFile.prototype.mapName = function(fn) {
+  return function() {
+    return fn(this._inspect().getFilename());
+  }.bind(this);
+};
+
 ProxyFile.prototype.patsubst = function(pattern, replacement) {
   return this.map(fez.patsubst.bind(this, pattern, replacement));
 };
