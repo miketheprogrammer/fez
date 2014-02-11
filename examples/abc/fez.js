@@ -12,11 +12,9 @@ exports.build = function(spec) {
     spec.rule(file, "c", function nop2() {});
   });
 
-  /*
   spec.with(["a", "b", "c"]).all(function(files) {
     spec.rule(files, "d", function nop3() {});
   });
-  */
 };
 
 exports.default = exports.build;

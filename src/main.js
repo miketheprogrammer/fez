@@ -62,7 +62,7 @@ function processTarget(target, options) {
     if(arguments.length === 2) {
       fn = secondaryInputs;
       output = undefined;
-      secondaryInputs = undefined;
+      secondaryInputs = function() { return []; };
     } else if(arguments.length === 3) {
       fn = output;
       output = secondaryInputs;
@@ -275,6 +275,7 @@ function evaluateOperation(context, node) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
       primaryInputs.push(input);
+      if(context.options.dot) printGraph(context.nodes);
     });
 
     return primaryInputs;
@@ -293,6 +294,7 @@ function evaluateOperation(context, node) {
   function createOutNode() {
     outNode = nodeForFile(context, output);
     node.outputs.push(outNode);
+    if(context.options.dot) printGraph(context.nodes);
     outNode.inputs.push(node);
     node.output = outNode;
   }
@@ -305,6 +307,8 @@ function evaluateOperation(context, node) {
       var input = nodeForFile(context, file);
       input.complete();
       input.outputs.push(node);
+      if(context.options.dot) printGraph(context.nodes);
+
       return input;
     });
 
@@ -320,9 +324,14 @@ function evaluateOperation(context, node) {
           file = nodeForFile(context, filename);
       file.inputs.push(node);
       node.outputs.push(file);
+
+      if(context.options.dot) printGraph(context.nodes);
+
       output = file;
 
       createOutNode();
+
+      if(context.options.dot) printGraph(context.nodes);
     }
 
     return secondaryInputs;
@@ -453,6 +462,7 @@ function matchAgainstStage(context, node, stage) {
     stage.rules.forEach(function(rule) {
       var operation = getOperationForRule(context, rule);
       node.outputs.push(operation);
+      if(context.options.dot) printGraph(context.nodes);
       operation.stageInputs.push(node);
       evaluateOperation(context, operation);
       change = true;
@@ -502,6 +512,8 @@ function nodeForFile(context, file) {
   var node = new FileNode(context, file);
   context.nodes.insert(node);
   context.worklist.push(node);
+
+  if(context.options.dot) printGraph(context.nodes);
 
   return node;
 }
