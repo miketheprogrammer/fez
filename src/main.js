@@ -575,31 +575,6 @@ ProxyFile.prototype.patsubst = function(pattern, replacement) {
   return this.map(fez.patsubst.bind(this, pattern, replacement));
 };
 
-ProxyFile.prototype.simpleMap = function(pattern) {
-  return function() {
-    var input = this._inspect().getFilename();
-    var f = (function() {
-      var basename = path.basename(input);
-      var hidden = false;
-      if(basename.charAt(0) == ".") {
-        hidden = true;
-        basename = basename.slice(1);
-      }
-
-      var split = basename.split(".");
-      if(split.length > 1) {
-        if(hidden) return "." + split.slice(0, -1).join(".");
-        else return split.slice(0, -1).join(".");
-      } else {
-        if(hidden) return "." + basename;
-        else return basename;
-      }
-    })();
-
-    return pattern.replace("%f", f).replace("%F", path.basename(input)).replace("%d", path.dirname(input)).replace("%e", path.extname(input)).replace("./", "");
-  }.bind(this);
-};
-
 function ProxyFileList() { };
 
 ProxyFileList.prototype.names = function() {
