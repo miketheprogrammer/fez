@@ -22,9 +22,16 @@ var util = require("util"),
 var id = 0;
 
 function fez(module) {
-  if(require.main === module) {
-    var options = xtend({ output: true }, getOptions()),
-        target = getTarget(options);
+  var options, target;
+  if(typeof module === "function") {
+    options = xtend({ output: true }, getOptions());
+    processTarget(module.exports[target], options).then(function(work) {
+      if(options.clean && !work) console.log("Nothing to clean.");
+      else if(!options.clean && !work) console.log("Nothing to be done.");
+    });
+  } else if(require.main === module) {
+    options = xtend({ output: true }, getOptions());
+    target = getTarget(options);
 
     options.module = module;
     processTarget(module.exports[target], options).then(function(work) {
