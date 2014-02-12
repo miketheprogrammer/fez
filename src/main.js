@@ -95,6 +95,10 @@ function processTarget(target, options, shared) {
     return new DoSpec(toArray(input), []);
   };
 
+  spec.do = function(fn) {
+    context.tasks.push({ fn: fn, inputs: [], outputs: [] });
+  };
+
   function DoSpec(inputs, outputs) {
     this.inputs = inputs;
     this.outputs = outputs;
