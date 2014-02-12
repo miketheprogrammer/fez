@@ -27,7 +27,10 @@ function fez(module) {
         target = getTarget(options);
 
     options.module = module;
-    processTarget(module.exports[target], options);
+    processTarget(module.exports[target], options).then(function(work) {
+      if(options.clean && !work) console.log("Nothing to clean.");
+      else if(!options.clean && !work) console.log("Nothing to be done.");
+    });
   }
 }
 
@@ -52,11 +55,16 @@ function getTarget(options) {
   return options.argv.remain.length ? options.argv.remain[0] : 'default';
 }
 
-function processTarget(target, options) {
+function processTarget(target, options, shared) {
+  if(!shared) {
+    shared = { top: target, work: false, deleted: [] };
+  }
+
   var stages = [],
       currentStage = null,
       spec = {},
-      context = { nodes: new Set(), stages: stages, worklist: [], options: options };
+      context = { nodes: new Set(), stages: stages, worklist: [], options: options, shared: shared },
+      requires = [];
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
     if(arguments.length === 2) {
@@ -85,9 +93,21 @@ function processTarget(target, options) {
     });
   };
 
+  spec.use = function(target) {
+    requires.push(target);
+  };
+
   target(spec);
 
-  loadInitialNodes(context);
+  return (function nextRequire() {
+    if(requires.length > 0) {
+      return processTarget(requires.shift(), options, shared).then(function() {
+        return nextRequire();
+      });
+    } else {
+      return loadInitialNodes(context);
+    }
+  })();
 };
 
 function Match(fn, setStage, resetStage) {
@@ -136,10 +156,7 @@ function loadInitialNodes(context) {
         inputs = inputs.concat(glob.sync(g));
       });
     } else {
-      var files = glob.sync("**");
-      inputs = files.filter(function(file) {
-        return stage.input(file);
-      });
+      inputs = glob.sync("**").filter(stage.input).concat(context.shared.deleted.filter(stage.input));
     }
 
     inputs.forEach(function(filename) {
@@ -147,7 +164,7 @@ function loadInitialNodes(context) {
     });
   });
 
-  work(context);
+  return work(context);
 }
 
 function work(context) {
@@ -158,7 +175,11 @@ function work(context) {
   });
 
   if(changed || context.worklist.length > 0) {
-    setImmediate(work.bind(this, context));
+    return new Promise(function(resolve, reject) {
+      setImmediate(function() {
+        resolve(work(context));
+      });
+    });
   } else {
     if(context.options.clean) {
       var anything = false;
@@ -168,6 +189,7 @@ function work(context) {
           anything = true;
           
           if(!context.options.quiet) {
+            context.shared.deleted.push(node.file);
             anything = true;
             process.stdout.write("Removing ");
             cursor.red();
@@ -176,21 +198,20 @@ function work(context) {
           }
         } catch(e) {}
       });
-      if(!anything && !context.options.quiet) console.log("Nothing to clean.");
-    } else {
-      Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
-        if(context.options.dot) printGraph(context.nodes);
-        if(!context.quiet && !any(work) && !context.options.quiet) {
-          console.log("Nothing to be done.");
-        }
-      });
 
+      return Promise.resolve(anything);
+    } else {
       context.nodes.array().filter(isMulti).forEach(function(node) {
         node.lazies._setFilenames(node.stageInputs.map(file));
       });
 
       context.nodes.array().filter(isSource).forEach(function(node) {
         node.complete();
+      });
+
+      return Promise.all(context.nodes.array().filter(isOperation).map(promise)).then(function(work) {
+        if(context.options.dot) printGraph(context.nodes);
+        return any(work);
       });
     }
   }
@@ -275,7 +296,6 @@ function evaluateOperation(context, node) {
       var input = nodeForFile(context, file);
       input.outputs.push(node);
       primaryInputs.push(input);
-      if(context.options.dot) printGraph(context.nodes);
     });
 
     return primaryInputs;
@@ -294,7 +314,6 @@ function evaluateOperation(context, node) {
   function createOutNode() {
     outNode = nodeForFile(context, output);
     node.outputs.push(outNode);
-    if(context.options.dot) printGraph(context.nodes);
     outNode.inputs.push(node);
     node.output = outNode;
   }
@@ -307,7 +326,6 @@ function evaluateOperation(context, node) {
       var input = nodeForFile(context, file);
       input.complete();
       input.outputs.push(node);
-      if(context.options.dot) printGraph(context.nodes);
 
       return input;
     });
@@ -325,13 +343,9 @@ function evaluateOperation(context, node) {
       file.inputs.push(node);
       node.outputs.push(file);
 
-      if(context.options.dot) printGraph(context.nodes);
-
       output = file;
 
       createOutNode();
-
-      if(context.options.dot) printGraph(context.nodes);
     }
 
     return secondaryInputs;
@@ -462,7 +476,6 @@ function matchAgainstStage(context, node, stage) {
     stage.rules.forEach(function(rule) {
       var operation = getOperationForRule(context, rule);
       node.outputs.push(operation);
-      if(context.options.dot) printGraph(context.nodes);
       operation.stageInputs.push(node);
       evaluateOperation(context, operation);
       change = true;
@@ -512,8 +525,6 @@ function nodeForFile(context, file) {
   var node = new FileNode(context, file);
   context.nodes.insert(node);
   context.worklist.push(node);
-
-  if(context.options.dot) printGraph(context.nodes);
 
   return node;
 }
