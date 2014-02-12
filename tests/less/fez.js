@@ -19,6 +19,10 @@ exports.build = function(spec) {
   spec.with("css/*.css").each(function(file) {
     spec.rule(file, file.patsubst("css/%.css", "dist/%.min.css"), clean());
   });
+
+  spec.after("dist.min.css").do(function() {
+    console.log("Success!");
+  });
 };
 
 exports.default = exports.build;

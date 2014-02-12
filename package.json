@@ -17,7 +17,8 @@
     "minimatch": "~0.2.14",
     "is-promise": "~1.0.0",
     "bluebird": "~1.0.3",
-    "xtend": "~2.1.2"
+    "xtend": "~2.1.2",
+    "glob-intersect": "0.0.2"
   },
   "main": "src/main.js",
   "devDependencies": {

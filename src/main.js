@@ -70,7 +70,7 @@ function processTarget(target, options, shared) {
   var stages = [],
       currentStage = null,
       spec = {},
-      context = { nodes: new Set(), stages: stages, worklist: [], options: options, shared: shared },
+      context = { nodes: new Set(), stages: stages, tasks: [], worklist: [], options: options, shared: shared },
       requires = [];
 
   spec.rule = function(primaryInput, secondaryInputs, output, fn) {
@@ -85,6 +85,31 @@ function processTarget(target, options, shared) {
     }
 
     currentStage.rules.push({ primaryInput: primaryInput, secondaryInputs: secondaryInputs, output: output, fn: fn, stage: currentStage });
+  };
+
+  /*spec.before = function(output) {
+    return new DoSpec([], toArray(output));
+  };*/
+  
+  spec.after = function(input) {
+    return new DoSpec(toArray(input), []);
+  };
+
+  function DoSpec(inputs, outputs) {
+    this.inputs = inputs;
+    this.outputs = outputs;
+  }
+
+  DoSpec.prototype.after = function(input) {
+    return new DoSpec(this.inputs.concat(toArray(input)), this.outputs);
+  };
+
+  /*DoSpec.prototype.before = function(output) {
+    return new DoSpec(this.input, this.outputs.concat(toArray(output)));
+  };*/
+
+  DoSpec.prototype.do = function(fn) {
+    context.tasks.push({ fn: fn, inputs: this.inputs, outputs: this.outputs });
   };
 
   spec.with = function(globs) {
@@ -135,14 +160,14 @@ Match.prototype.not = function(globs) {
 
 Match.prototype.each = function(fn) {
   var proxy = new ProxyFile();
-  this.setStage({ input: this.fn, rules: [], proxy: proxy });
+  this.setStage({ input: this.fn, rules: [], tasks: [], proxy: proxy });
   fn(proxy);
   this.resetStage();
 };
 
 Match.prototype.one = function(fn) {
   var proxy = new ProxyFile();
-  this.setStage({ input: this.fn, rules: [], proxy: proxy, one: true, matched: false });
+  this.setStage({ input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false });
   fn(proxy);
   this.resetStage();
 };
@@ -200,6 +225,27 @@ function work(context) {
 
       return Promise.resolve(anything);
     } else {
+      context.tasks.forEach(function(task) {
+        var taskNode = new TaskNode(task.fn);
+
+        context.nodes.array().filter(isFile).forEach(function(node) {
+          task.inputs.forEach(function(input) {
+            if(minimatch(node.file, input)) {
+              node.outputs.push(taskNode);
+              taskNode.inputs.push(node);
+            }
+          });
+        });
+
+        Promise.all(taskNode.inputs.map(promise)).then(function() {
+          Promise.cast(taskNode.fn()).then(function() {
+            taskNode._deferred.resolve();
+          });
+        });
+        
+        context.nodes.insert(taskNode);
+      });
+
       context.nodes.array().filter(isMulti).forEach(function(node) {
         node.lazies._setFilenames(node.stageInputs.map(file));
       });
@@ -221,7 +267,7 @@ function isFile(node) {
 }
 
 function isOperation(node) {
-  return !isFile(node);
+  return node.rule !== undefined;
 }
 
 function isMulti(node) {
@@ -526,6 +572,14 @@ function nodeForFile(context, file) {
 
   return node;
 }
+
+function TaskNode(fn) {
+  this.fn = fn;
+  this._deferred = Promise.defer();
+  this.promise = this._deferred.promise;
+  this.inputs = [];
+  this.outputs = [];
+};
 
 function FileNode(context, file) {
   this.id = id++;
