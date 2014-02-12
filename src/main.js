@@ -396,6 +396,7 @@ function processOutput(out, output, inputs, context) {
       return processOutput(out, output, inputs);
     }, function() {
       console.log("An operation failed. Aborting.");
+      //(ibw) there's got to be a more elegant way to break out of the build
       process.exit(1);
       return Promise.resolve(true);
     });
