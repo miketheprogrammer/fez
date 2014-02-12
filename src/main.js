@@ -163,24 +163,30 @@ Match.prototype.not = function(globs) {
 };
 
 Match.prototype.each = function(fn) {
-  var proxy = new ProxyFile();
-  this.setStage({ input: this.fn, rules: [], tasks: [], proxy: proxy });
+  var proxy = new ProxyFile(),
+      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, operations: [] };
+  this.setStage(stage);
   fn(proxy);
   this.resetStage();
+  return stage;
 };
 
 Match.prototype.one = function(fn) {
-  var proxy = new ProxyFile();
-  this.setStage({ input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false });
+  var proxy = new ProxyFile(),
+      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false, operations: [] };
+  this.setStage(stage);
   fn(proxy);
   this.resetStage();
+  return stage;
 };
 
 Match.prototype.all = function(fn) {
-  var proxy = new ProxyFileList();
-  this.setStage({ input: this.fn, rules: [], multi: true, proxy: proxy });
+  var proxy = new ProxyFileList(),
+      stage = { input: this.fn, rules: [], multi: true, proxy: proxy, operations: [] };
+  this.setStage(stage);
   fn(proxy);
   this.resetStage();
+  return stage;
 };
 
 function loadInitialNodes(context) {
@@ -234,11 +240,21 @@ function work(context) {
 
         context.nodes.array().filter(isFile).forEach(function(node) {
           task.inputs.forEach(function(input) {
-            if(minimatch(node.file, input)) {
-              node.outputs.push(taskNode);
-              taskNode.inputs.push(node);
+            if(typeof input === "string") {
+              if(minimatch(node.file, input)) {
+                node.outputs.push(taskNode);
+                taskNode.inputs.push(node);
+              }
             }
           });
+        });
+
+        task.inputs.forEach(function(input) {
+          if(typeof input !== "string") {
+            input.operations.forEach(function(op) {
+              taskNode.inputs.push(op);
+            });
+          }
         });
 
         Promise.all(taskNode.inputs.map(promise)).then(function() {
@@ -518,6 +534,7 @@ function matchAgainstStage(context, node, stage) {
     } else if (stage.one) {
       stage.matched = true;
     }
+
     var change = false;
 
     stage.rules.forEach(function(rule) {
@@ -536,12 +553,16 @@ function matchAgainstStage(context, node, stage) {
 
 function getOperationForRule(context, rule) {
   if(rule.stage.multi) {
-    if(!rule.operation)
+    if(!rule.operation) {
       rule.operation = { id: id++, stageInputs: [], outputs: [], rule: rule, lazies: new LazyFileList(context) };
+      rule.stage.operations.push(rule.operation);
+    }
+
     context.nodes.insert(rule.operation);
     return rule.operation;
   } else {
     var node = { id: id++, stageInputs: [], outputs: [], rule: rule };
+    rule.stage.operations.push(node);
     context.nodes.insert(node);
     return node;
   }
