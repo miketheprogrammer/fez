@@ -293,7 +293,7 @@ function evaluateOperation(context, node) {
     return primaryInputs;
   });
 
-  var output;
+  var hasOutput = false;
   if(typeof node.rule.output === "string") {
     createOutNode(node.rule.output);
   } else if(node.rule.output !== undefined) { 
@@ -302,6 +302,7 @@ function evaluateOperation(context, node) {
 
   var outNode;
   function createOutNode(output) {
+    hasOutput = true;
     outNode = nodeForFile(context, output);
     node.outputs.push(outNode);
     outNode.inputs.push(node);
@@ -320,7 +321,7 @@ function evaluateOperation(context, node) {
       return input;
     });
 
-    if(!output) {
+    if(!hasOutput) {
       var hash = crypto.createHash("sha256");
       
       var inputs = (node.primaryInput ? [node.primaryInput.file] : []).concat(secondaryInputs.map(function(n) { return n.file; }));
