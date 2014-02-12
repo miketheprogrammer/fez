@@ -149,15 +149,7 @@ Match.prototype.all = function(fn) {
 
 function loadInitialNodes(context) {
   context.stages.forEach(function(stage) {
-    var inputs;
-    if(Array.isArray(stage.input)) {
-      inputs = [];
-      stage.input.forEach(function(g) {
-        inputs = inputs.concat(glob.sync(g));
-      });
-    } else {
-      inputs = glob.sync("**").filter(stage.input).concat(context.shared.deleted.filter(stage.input));
-    }
+    var inputs = glob.sync("**").filter(stage.input).concat(context.shared.deleted.filter(stage.input));
 
     inputs.forEach(function(filename) {
       nodeForFile(context, filename);
@@ -303,15 +295,13 @@ function evaluateOperation(context, node) {
 
   var output;
   if(typeof node.rule.output === "string") {
-    output = node.rule.output;
-    createOutNode();
-  } else if(node.rule.output) { 
-    output = node.rule.output();
-    createOutNode();
+    createOutNode(node.rule.output);
+  } else if(node.rule.output !== undefined) { 
+    createOutNode(node.rule.output());
   }
 
   var outNode;
-  function createOutNode() {
+  function createOutNode(output) {
     outNode = nodeForFile(context, output);
     node.outputs.push(outNode);
     outNode.inputs.push(node);
@@ -338,14 +328,8 @@ function evaluateOperation(context, node) {
         hash.update(input);
       });
 
-      var filename = ".fez/" + (node.rule.fn.name === "" ? "" : node.rule.fn.name + ".") + hash.digest("base64").replace("+", "").replace("/", "").substr(0, 6) + "~",
-          file = nodeForFile(context, filename);
-      file.inputs.push(node);
-      node.outputs.push(file);
-
-      output = file;
-
-      createOutNode();
+      var filename = ".fez/" + (node.rule.fn.name === "" ? "" : node.rule.fn.name + ".") + hash.digest("base64").replace("+", "").replace("/", "").substr(0, 6) + "~";
+      createOutNode(filename);
     }
 
     return secondaryInputs;
@@ -409,6 +393,10 @@ function processOutput(out, output, inputs, context) {
   if(isPromise(out)) {
     return out.then(function(out) {
       return processOutput(out, output, inputs);
+    }, function() {
+      console.log("An operation failed. Aborting.");
+      process.exit(1);
+      return Promise.resolve(true);
     });
   } else if(out instanceof Writable) {
     printCreating(output);
@@ -519,6 +507,7 @@ function every(arr) {
 }
 
 function nodeForFile(context, file) {
+  assert(typeof file === "string");
   for(var i = 0; i < context.nodes.array().length; i++) 
     if(context.nodes.array()[i].file === file) return context.nodes.array()[i];
 
