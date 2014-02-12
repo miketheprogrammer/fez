@@ -572,7 +572,7 @@ ProxyFile.prototype.mapName = function(fn) {
 };
 
 ProxyFile.prototype.patsubst = function(pattern, replacement) {
-  return this.map(fez.patsubst.bind(this, pattern, replacement));
+  return this.mapName(patsubst.bind(this, pattern, replacement));
 };
 
 function ProxyFileList() { };
@@ -745,13 +745,11 @@ fez.exec = function(command) {
   return ex;
 };
 
-function patsubst(pattern, replacement) {
-  return function(string) {
-    var regex = new RegExp(pattern.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1").replace("%", "(.+)")),
-        result = regex.exec(string),
-        sub = result[1],
-        out = replacement.replace("%", sub);
+function patsubst(pattern, replacement, string) {
+  var regex = new RegExp(pattern.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1").replace("%", "(.+)")),
+      result = regex.exec(string),
+      sub = result[1],
+      out = replacement.replace("%", sub);
 
-    return out;
-  };
+  return out;
 };
