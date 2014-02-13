@@ -467,8 +467,9 @@ function processOutput(out, output, inputs, context) {
   if(isPromise(out)) {
     return out.then(function(out) {
       return processOutput(out, output, inputs);
-    }, function() {
+    }, function(err) {
       console.log("An operation failed. Aborting.");
+      if(err instanceof Error) console.log(err.stack);
       //(ibw) there's got to be a more elegant way to break out of the build
       process.exit(1);
       return Promise.resolve(true);
