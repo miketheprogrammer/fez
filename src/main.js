@@ -25,7 +25,7 @@ function fez(module) {
   var options, target;
   if(typeof module === "function") {
     options = xtend({ output: true }, getOptions());
-    processTarget(module.exports[target], options).then(function(work) {
+    processTarget(module, options).then(function(work) {
       if(options.clean && !work) console.log("Nothing to clean.");
       else if(!options.clean && !work) console.log("Nothing to be done.");
     });
@@ -724,8 +724,12 @@ function writep(file, data) {
 }
 
 function needsUpdate(inputs, outputs, context) {
-  var stat = fs.statSync(context.options.module.filename),
-      mtime = stat.mtime.getTime();
+  var mtime = 0;
+
+  if(context.options.module) {
+    var stat = fs.statSync(context.options.module.filename);
+    mtime = stat.mtime.getTime();
+  }
 
   var oldestOutput = Number.MAX_VALUE;
   outputs.forEach(function(out) {
