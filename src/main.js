@@ -90,7 +90,7 @@ function processTarget(target, options, shared) {
   /*spec.before = function(output) {
     return new DoSpec([], toArray(output));
   };*/
-  
+
   spec.after = function(input) {
     return new DoSpec(toArray(input), []);
   };
@@ -126,7 +126,7 @@ function processTarget(target, options, shared) {
       currentStage = stage;
     }, function () {
       currentStage = undefined;
-    });
+    }, toArray(globs));
   };
 
   spec.use = function(target) {
@@ -146,10 +146,11 @@ function processTarget(target, options, shared) {
   })();
 };
 
-function Match(fn, setStage, resetStage) {
+function Match(fn, setStage, resetStage, initialGlobs) {
   this.fn = fn;
   this.setStage = setStage;
   this.resetStage = resetStage;
+  this.initialGlobs = initialGlobs;
 };
 
 Match.prototype.not = function(globs) {
@@ -159,12 +160,12 @@ Match.prototype.not = function(globs) {
     return fn(file) && !any(toArray(globs).map(function(glob) {
       minimatch(file, glob);
     }));
-  }, this.setStage, this.resetStage);
+  }, this.setStage, this.resetStage, this.initialGlobs);
 };
 
 Match.prototype.each = function(fn) {
   var proxy = new ProxyFile(),
-      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, operations: [] };
+      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, operations: [], initialGlobs: this.initialGlobs };
   this.setStage(stage);
   fn(proxy);
   this.resetStage();
@@ -173,7 +174,7 @@ Match.prototype.each = function(fn) {
 
 Match.prototype.one = function(fn) {
   var proxy = new ProxyFile(),
-      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false, operations: [] };
+      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false, operations: [], initialGlobs: this.initialGlobs };
   this.setStage(stage);
   fn(proxy);
   this.resetStage();
@@ -182,7 +183,7 @@ Match.prototype.one = function(fn) {
 
 Match.prototype.all = function(fn) {
   var proxy = new ProxyFileList(),
-      stage = { input: this.fn, rules: [], multi: true, proxy: proxy, operations: [] };
+      stage = { input: this.fn, rules: [], multi: true, proxy: proxy, operations: [], initialGlobs: this.initialGlobs };
   this.setStage(stage);
   fn(proxy);
   this.resetStage();
@@ -191,8 +192,11 @@ Match.prototype.all = function(fn) {
 
 function loadInitialNodes(context) {
   context.stages.forEach(function(stage) {
-    var inputs = glob.sync("**").filter(stage.input).concat(context.shared.deleted.filter(stage.input));
-
+    var inputs = [];
+    stage.initialGlobs.forEach(function(g) {
+      inputs = inputs.concat(glob.sync(g, { nosort: true }));
+    });
+    inputs = inputs.concat(context.shared.deleted.filter(stage.input)); // XXX: This line needs test coverage
     inputs.forEach(function(filename) {
       nodeForFile(context, filename);
     });
@@ -221,7 +225,7 @@ function work(context) {
         try {
           fs.unlinkSync(node.file);
           anything = true;
-          
+
           if(!context.options.quiet) {
             context.shared.deleted.push(node.file);
             anything = true;
@@ -262,7 +266,7 @@ function work(context) {
             taskNode._deferred.resolve();
           });
         });
-        
+
         context.nodes.insert(taskNode);
       });
 
@@ -369,7 +373,7 @@ function evaluateOperation(context, node) {
   var hasOutput = false;
   if(typeof node.rule.output === "string") {
     createOutNode(node.rule.output);
-  } else if(node.rule.output !== undefined) { 
+  } else if(node.rule.output !== undefined) {
     createOutNode(node.rule.output());
   }
 
@@ -396,7 +400,7 @@ function evaluateOperation(context, node) {
 
     if(!hasOutput) {
       var hash = crypto.createHash("sha256");
-      
+
       var inputs = (node.primaryInput ? [node.primaryInput.file] : []).concat(secondaryInputs.map(function(n) { return n.file; }));
       inputs.forEach(function(input) {
         hash.update(input);
@@ -502,7 +506,7 @@ function processOutput(out, output, inputs, context) {
 function printCreating(output) {
   process.stdout.write("Creating ");
   cursor.green();
-  process.stdout.write(output + "\n"); 
+  process.stdout.write(output + "\n");
   cursor.reset();
 }
 
@@ -589,7 +593,7 @@ function every(arr) {
 
 function nodeForFile(context, file) {
   assert(typeof file === "string");
-  for(var i = 0; i < context.nodes.array().length; i++) 
+  for(var i = 0; i < context.nodes.array().length; i++)
     if(context.nodes.array()[i].file === file) return context.nodes.array()[i];
 
   var node = new FileNode(context, file);
