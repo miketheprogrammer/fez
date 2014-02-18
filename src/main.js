@@ -144,14 +144,14 @@ function processTarget(target, options, shared) {
       return loadInitialNodes(context);
     }
   })();
-};
+}
 
 function Match(fn, setStage, resetStage, initialGlobs) {
   this.fn = fn;
   this.setStage = setStage;
   this.resetStage = resetStage;
   this.initialGlobs = initialGlobs;
-};
+}
 
 Match.prototype.not = function(globs) {
   var fn = this.fn;
@@ -306,13 +306,14 @@ function not(fn) {
   return function(val) {
     return !fn(val);
   };
-};
+}
 
 function printGraph(nodes) {
   process.stdout.write("digraph{");
   nodes.array().forEach(function(node) {
+    var name;
     if(node.file) {
-      var name = node.file;
+      name = node.file;
       //if(node.promise.isResolved())
       //name += "+";
       process.stdout.write(node.id + " [shape=box,label=\"" + name + "\"];");
@@ -512,19 +513,6 @@ function printCreating(output) {
 
 function promise(e) {
   return e.promise;
-};
-
-function sumTruthy(arr) {
-  return arr.reduce(function(prev, cur) {
-    if(cur) return prev + 1;
-    return prev;
-  }, 0);
-};
-
-function prop(p) {
-  return function(el) {
-    return el[p];
-  };
 }
 
 function matchAgainstStage(context, node, stage) {
@@ -609,7 +597,7 @@ function TaskNode(fn) {
   this.promise = this._deferred.promise;
   this.inputs = [];
   this.outputs = [];
-};
+}
 
 function FileNode(context, file) {
   this.id = id++;
@@ -640,8 +628,7 @@ function callfn(fn) {
   return fn;
 }
 
-function ProxyFile() {
-};
+function ProxyFile() { }
 
 ProxyFile.prototype._setFile = function(lazy) {
   this._lazy = lazy;
@@ -668,7 +655,7 @@ ProxyFile.prototype.patsubst = function(pattern, replacement) {
   return this.mapName(patsubst.bind(this, pattern, replacement));
 };
 
-function ProxyFileList() { };
+function ProxyFileList() { }
 
 ProxyFileList.prototype.names = function() {
   return this._lazies.getFilenames();
@@ -676,7 +663,7 @@ ProxyFileList.prototype.names = function() {
 
 function LazyFileList(context) {
   this._filenames = Promise.defer();
-};
+}
 
 LazyFileList.prototype.getFilenames = function() {
   return this._filenames.promise;
@@ -689,7 +676,7 @@ LazyFileList.prototype._setFilenames = function(filenames) {
 function LazyFile(context, filename) {
   this._filename = filename;
   this._asBuffer = Promise.defer();
-};
+}
 
 LazyFile.prototype._loadFile = function(filename) {
   if(filename)
@@ -772,7 +759,7 @@ function needsUpdate(inputs, outputs, context) {
 function allInputs(op) {
   if(op.secondaryInputs) return [op.primaryInput].concat(op.secondaryInputs);
   else return [op.primaryInput];
-};
+}
 
 //(ibw) should switch to a real set data structure for maximum performance
 function union(a, b) {
@@ -836,7 +823,7 @@ fez.exec = function(command) {
         else resolve(true);
       });
     });
-  };
+  }
 
   ex.value = command;
   return ex;
@@ -849,4 +836,4 @@ function patsubst(pattern, replacement, string) {
       out = replacement.replace("%", sub);
 
   return out;
-};
+}
