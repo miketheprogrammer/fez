@@ -12,8 +12,7 @@ your pull request:
   you're doing something wrong. Split your code into well-contained
   functions. As a rule of thumb, a function shouldn't be bigger than your
   head. Literally.
-* Add a unit test for every new feature. To do this, copy an existing test
-  project (both its directory and its test file), usually basic/, and add just
-  enough code to test your new feature. Try to keep unit tests lean and
-  orthogonal.
+* Add a test for every new feature. To do this, copy an existing test project
+  (both its directory and its test file), usually basic/, and add just enough
+  code to test your new feature. Try to keep tests lean and orthogonal.
 
