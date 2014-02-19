@@ -1,5 +1,4 @@
 var util = require("util"),
-    nopt = require("nopt"),
     ansi = require("ansi"),
     cursor = ansi(process.stdout),
     crypto = require("crypto"),
@@ -18,8 +17,12 @@ var util = require("util"),
     Match = require("./match.js"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
+    flatten = require("./flatten.js"),
+    getOptions = require("./options.js"),
     ProxyFile = require("./proxy-file.js").ProxyFile,
     ProxyFileList = require("./proxy-file.js").ProxyFileList,
+    LazyFile = require("./lazy.js").LazyFile,
+    LazyFileList = require("./lazy.js").LazyFileList,
     Set = require("./set.js");
 
 var id = 0;
@@ -42,23 +45,6 @@ function fez(module) {
       else if(!options.clean && !work) console.log("Nothing to be done.");
     });
   }
-}
-
-function getOptions() {
-  var options = nopt({
-    "verbose": Boolean,
-    "quiet": Boolean,
-    "clean": Boolean,
-    "dot": Boolean
-  }, {
-    "v": "--verbose",
-    "q": "--quiet",
-    "c": "--clean"
-  });
-
-  if(options.dot) options.quiet = true;
-
-  return options;
 }
 
 function getTarget(options) {
@@ -318,7 +304,7 @@ function evaluateOperation(context, node) {
   else if(node.rule.primaryInput instanceof ProxyFile) primaryInputPromise = Promise.resolve(node.rule.primaryInput._inspect().getFilename());
   else primaryInputPromise = node.rule.primaryInput();
 
-  primaryInputPromise = toPromise(primaryInputPromise).then(function(resolved) {
+  primaryInputPromise = Promise.cast(primaryInputPromise).then(function(resolved) {
     var primaryInputs = [];
 
     toArray(resolved).forEach(function(file) {
@@ -349,7 +335,7 @@ function evaluateOperation(context, node) {
   var secondaryInputPromise;
   secondaryInputPromise = node.rule.secondaryInputs();
 
-  secondaryInputPromise = toPromise(secondaryInputPromise).then(function(resolved) {
+  secondaryInputPromise = Promise.cast(secondaryInputPromise).then(function(resolved) {
     var secondaryInputs = resolved.map(function(file) {
       var input = nodeForFile(context, file);
       input.complete();
@@ -444,13 +430,14 @@ function processOutput(out, output, inputs, context) {
     return new Promise(function(resolve, reject) {
       out.pipe(fs.createWriteStream(output));
       out.on("end", function() {
-        resolve();
+        resolve(true);
       });
     });
   } else if(out instanceof Buffer || typeof out === "string") {
     printCreating(output);
     return writep(output, out);
-  } else if(!out) {
+  } else if(out === undefined) {
+    printCreating(output);
     return writep(output, new Buffer(0));
   } else if(out === true) {
     printCreating(output);
@@ -520,12 +507,6 @@ function getOperationForRule(context, rule) {
   }
 }
 
-function isStageInOutputs(outputs, stage) {
-  for(var i = 0; i < outputs.length; i++)
-    if(outputs[i].rule.stage === stage) return true;
-  return false;
-}
-
 function any(arr) {
   for(var i = 0; i < arr.length; i++)
     if(arr[i]) return true;
@@ -578,48 +559,6 @@ FileNode.prototype.complete = function() {
 
 FileNode.prototype.isComplete = function() {
   return !!this._complete;
-};
-
-
-function callfn(fn) {
-  if(typeof fn === "function")
-    return fn();
-  return fn;
-}
-
-function LazyFileList(context) {
-  this._filenames = Promise.defer();
-}
-
-LazyFileList.prototype.getFilenames = function() {
-  return this._filenames.promise;
-};
-
-LazyFileList.prototype._setFilenames = function(filenames) {
-  this._filenames.resolve(filenames);
-};
-
-function LazyFile(context, filename) {
-  this._filename = filename;
-  this._asBuffer = Promise.defer();
-}
-
-LazyFile.prototype._loadFile = function(filename) {
-  if(filename)
-    this._setFilename(filename);
-
-  fs.readFile(this.getFilename(), function(err, data) {
-    if(err) this._asBuffer.reject(err);
-    else this._asBuffer.resolve(data);
-  }.bind(this));
-};
-
-LazyFile.prototype.getFilename = function() {
-  return this._filename;
-};
-
-LazyFile.prototype.asBuffer = function() {
-  return this._asBuffer.promise;
 };
 
 function toArray(obj) {
@@ -680,30 +619,6 @@ function needsUpdate(inputs, outputs, context) {
   });
 
   return (mtime > oldestOutput) || (newestInput > oldestOutput);
-}
-
-//(ibw) should switch to a real set data structure for maximum performance
-function union(a, b) {
-  var a2 = a.filter(function() { return true; });
-  b.forEach(function(e) {
-    if(a.indexOf(e) == -1)
-      a2.push(e);
-  });
-
-  return a2;
-}
-
-function flatten(arrays) {
-  if(!Array.isArray(arrays)) return [arrays];
-
-  return arrays.reduce(function(prev, array) {
-    if(Array.isArray(array)) return prev.concat(flatten(array));
-    else return prev.concat(flatten(array));
-  }, []);
-}
-
-function toPromise(p) {
-  return Promise.cast(p);
 }
 
 fez.exec = function(command) {
