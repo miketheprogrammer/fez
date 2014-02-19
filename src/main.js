@@ -15,8 +15,11 @@ var util = require("util"),
     exec = require("child_process").exec,
     Promise = require("bluebird"),
     xtend = require("xtend"),
+    Match = require("./match.js"),
     mxtend = require("xtend/mutable"),
     Input = require("./input.js"),
+    ProxyFile = require("./proxy-file.js").ProxyFile,
+    ProxyFileList = require("./proxy-file.js").ProxyFileList,
     Set = require("./set.js");
 
 var id = 0;
@@ -145,50 +148,6 @@ function processTarget(target, options, shared) {
     }
   })();
 }
-
-function Match(fn, setStage, resetStage, initialGlobs) {
-  this.fn = fn;
-  this.setStage = setStage;
-  this.resetStage = resetStage;
-  this.initialGlobs = initialGlobs;
-}
-
-Match.prototype.not = function(globs) {
-  var fn = this.fn;
-
-  return new Match(function(file) {
-    return fn(file) && !any(toArray(globs).map(function(glob) {
-      minimatch(file, glob);
-    }));
-  }, this.setStage, this.resetStage, this.initialGlobs);
-};
-
-Match.prototype.each = function(fn) {
-  var proxy = new ProxyFile(),
-      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, operations: [], initialGlobs: this.initialGlobs };
-  this.setStage(stage);
-  fn(proxy);
-  this.resetStage();
-  return stage;
-};
-
-Match.prototype.one = function(fn) {
-  var proxy = new ProxyFile(),
-      stage = { input: this.fn, rules: [], tasks: [], proxy: proxy, one: true, matched: false, operations: [], initialGlobs: this.initialGlobs };
-  this.setStage(stage);
-  fn(proxy);
-  this.resetStage();
-  return stage;
-};
-
-Match.prototype.all = function(fn) {
-  var proxy = new ProxyFileList(),
-      stage = { input: this.fn, rules: [], multi: true, proxy: proxy, operations: [], initialGlobs: this.initialGlobs };
-  this.setStage(stage);
-  fn(proxy);
-  this.resetStage();
-  return stage;
-};
 
 function loadInitialNodes(context) {
   context.stages.forEach(function(stage) {
@@ -628,39 +587,6 @@ function callfn(fn) {
   return fn;
 }
 
-function ProxyFile() { }
-
-ProxyFile.prototype._setFile = function(lazy) {
-  this._lazy = lazy;
-};
-
-ProxyFile.prototype._inspect = function() {
-  if(this._lazy === undefined) throw new Error("Can't call inspect_() outside of a lazy function");
-  return this._lazy;
-};
-
-ProxyFile.prototype.map = function(fn) {
-  return function() {
-    return fn(this._inspect());
-  }.bind(this);
-};
-
-ProxyFile.prototype.mapName = function(fn) {
-  return function() {
-    return fn(this._inspect().getFilename());
-  }.bind(this);
-};
-
-ProxyFile.prototype.patsubst = function(pattern, replacement) {
-  return this.mapName(patsubst.bind(this, pattern, replacement));
-};
-
-function ProxyFileList() { }
-
-ProxyFileList.prototype.names = function() {
-  return this._lazies.getFilenames();
-};
-
 function LazyFileList(context) {
   this._filenames = Promise.defer();
 }
@@ -756,11 +682,6 @@ function needsUpdate(inputs, outputs, context) {
   return (mtime > oldestOutput) || (newestInput > oldestOutput);
 }
 
-function allInputs(op) {
-  if(op.secondaryInputs) return [op.primaryInput].concat(op.secondaryInputs);
-  else return [op.primaryInput];
-}
-
 //(ibw) should switch to a real set data structure for maximum performance
 function union(a, b) {
   var a2 = a.filter(function() { return true; });
@@ -785,30 +706,6 @@ function toPromise(p) {
   return Promise.cast(p);
 }
 
-function resolveRuleInputs(rule) {
-  var newRule = {};
-
-  //Shallow clone
-  for(var prop in rule) {
-    newRule[prop] = rule[prop];
-  }
-
-  return Promise.all(toArray(newRule.inputs)).then(function(inputs) {
-    newRule.inputs = flatten(inputs);
-    return newRule;
-  });
-}
-
-function resolveRuleInput(input) {
-  return input;
-}
-
-module.exports = fez;
-
-fez.allInputs = function(primary, secondary) {
-  return (primary ? [primary] : []).concat(secondary);
-};
-
 fez.exec = function(command) {
   function ex(inputs, output) {
     var ifiles = inputs.map(function(i) { return i.getFilename(); }).join(" "),
@@ -829,11 +726,5 @@ fez.exec = function(command) {
   return ex;
 };
 
-function patsubst(pattern, replacement, string) {
-  var regex = new RegExp(pattern.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1").replace("%", "(.+)")),
-      result = regex.exec(string),
-      sub = result[1],
-      out = replacement.replace("%", sub);
+module.exports = fez;
 
-  return out;
-}
