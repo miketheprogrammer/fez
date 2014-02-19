@@ -5,15 +5,11 @@ function nop() {}
 
 exports.build = function(spec) {
   spec.with("a").each(function(file) {
-    spec.rule(file, "b", function nop1() {});
+    spec.rule(file, "b", nop);
   });
 
   spec.with("b").each(function(file) {
-    spec.rule(file, "c", function nop2() {});
-  });
-
-  spec.with(["a", "b", "c"]).all(function(files) {
-    spec.rule(files, "d", function nop3() {});
+    spec.rule(file, "c", nop);
   });
 };
 
