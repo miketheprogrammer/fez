@@ -1,3 +1,10 @@
+/**
+ * Features tested:
+ * - basic operation
+ * - spec.with(...).each(...)
+ * - spec.rule with constant output
+ */
+
 var test = require("tape"), 
     exec = require("child_process").exec,
     fs = require("fs");

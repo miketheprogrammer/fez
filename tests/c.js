@@ -1,3 +1,9 @@
+/**
+ * Features tested:
+ * - fez.exec
+ * - file.patsubst
+ */
+
 var test = require("tape"), 
     exec = require("child_process").exec,
     fs = require("fs");
