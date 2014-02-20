@@ -6,21 +6,30 @@ function Set(id) {
     };
 
   this._id = id;
-  this._array = [];
+  this._set = {};
+
+  Object.defineProperty(this._set, "length", {value : 0,
+                                             writable : true,
+                                             configurable : false,
+                                             enumerable : false});
+
+  
 }
 
 Set.prototype.insert = function(el) {
+  if (this._id(el) === undefined) return false;
   if(!this.exists(el)) {
-    this._array.push(el);
+    this._set[this._id(el)] = el;
+    this._set.length += 1;
     return true;
   }
-
   return false;
 };
 
 Set.prototype.remove = function(el) {
   if(this.exists(el)) {
-    this._array.splice(this._array.indexOf(el), 1);
+    delete this._set[this._id(el)];
+    this._set.length -= 1;
     return true;
   }
 
@@ -28,21 +37,26 @@ Set.prototype.remove = function(el) {
 };
 
 Set.prototype.exists = function(el) {
-  for(var i = 0; i < this._array.length; i++)
-    if(this._id(el) === this._id(this._array[i]))
-      return true;
-
-  return false;
+  // This works even if the value is explicitly undefined like {name: undefined}
+  return (this._id(el) in this._set);
 };
 
 Set.prototype.array = function() {
-  return this._array;
+  var array = [];
+  for (var key in this._set) {
+    array.push(this._set[key]);
+  }
+  return array;
 };
 
 Set.prototype.clone = function() {
   var other = new Set(this._id);
-  other._array = this._array.slice();
+  other._set = (function copy(obj) { return obj } ) (this._set);
   return other;
 };
+
+Set.prototype.length = function () {
+  return this._set.length;
+}
 
 module.exports = Set;
