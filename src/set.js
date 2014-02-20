@@ -51,7 +51,9 @@ Set.prototype.array = function() {
 
 Set.prototype.clone = function() {
   var other = new Set(this._id);
-  other._set = (function copy(obj) { return obj } ) (this._set);
+  for (var key in this._set)
+    other._set[key] = this._set[key];
+  
   return other;
 };
 
